@@ -10,6 +10,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..700,30..100&family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="./style.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" defer></script>
+<script src="./script.js" defer></script>
 </head>
 <body>
 
@@ -288,6 +291,30 @@
 
   <div class="section">
     <div class="container">
+
+      <div class="ai-upload-card" id="aiUploadCard">
+        <div class="ai-upload-grid">
+          <div class="ai-upload-copy">
+            <span class="eyebrow" style="margin-bottom:10px">Smart upload</span>
+            <h3>Already have a resume? <em>We'll read it for you.</em></h3>
+            <p>Drop a PDF, DOCX, or TXT file. CareerForge extracts your name, contact, experience, education, and skills — then auto-fills the form on the right and drafts a matching cover letter.</p>
+          </div>
+          <div class="ai-upload-zone" id="aiUploadZone" tabindex="0" role="button" aria-label="Upload a resume to auto-fill">
+            <div class="ai-upload-prompt" id="aiUploadPrompt">
+              <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+                <rect x="6" y="4" width="20" height="26" rx="2" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M11 12h10M11 17h10M11 22h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <circle cx="28" cy="28" r="6" fill="white" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M28 25v6M25 28h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <h4>Drop file or click to browse</h4>
+              <p>PDF, DOCX, TXT — up to 10MB</p>
+            </div>
+            <div class="ai-upload-status" id="aiUploadStatus" hidden></div>
+          </div>
+        </div>
+      </div>
+
       <div class="builder">
         <form class="builder-form" id="resumeForm" onsubmit="return false">
           <h3>Your information</h3>
@@ -1122,6 +1149,5 @@ Mentored 6 designers; reduced onboarding time by 3 weeks.</textarea>
   <span id="toastMsg">Done.</span>
 </div>
 
-<script src="./script.js" defer></script>
 </body>
 </html>

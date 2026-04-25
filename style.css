@@ -491,3 +491,48 @@ p{margin:0}
 .modal-body .modal-cta{margin-top:18px;display:flex;gap:10px;flex-wrap:wrap}
 @media (max-width:520px){.modal{padding:32px 24px 28px}.modal h2{font-size:1.4rem;margin-right:32px}}
 body.modal-open{overflow:hidden}
+
+/* ─── Upload states (analyzing / success / error) ───────── */
+.upload-zone.analyzing,.upload-zone.success,.upload-zone.error{cursor:default}
+.upload-zone .spinner{display:inline-block;width:32px;height:32px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.upload-zone.analyzing{border-color:var(--accent);background:var(--accent-soft)}
+.upload-zone.success{border-style:solid;border-color:var(--accent);background:var(--accent-soft)}
+.upload-zone.success svg{color:var(--accent-deep)}
+.upload-zone.error{border-color:#C2410C;background:#FEF6EE;border-style:solid}
+.upload-zone .ok-ring{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:50%;background:var(--accent);color:#fff;margin:0 auto 12px}
+.upload-zone .err-ring{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:50%;background:#C2410C;color:#fff;margin:0 auto 12px}
+.upload-zone .parse-stats{display:flex;justify-content:center;gap:20px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);font-size:.74rem;color:var(--ink-2);letter-spacing:.06em}
+.upload-zone .parse-stats b{color:var(--ink);font-weight:600}
+.parsed-banner{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--accent-soft);border:1px solid rgba(14,159,110,.25);border-radius:10px;margin-bottom:14px;font-size:.86rem;color:var(--accent-deep)}
+.parsed-banner svg{flex-shrink:0;color:var(--accent-deep)}
+.parsed-banner b{color:var(--ink);font-weight:600}
+
+/* ─── Smart resume upload card ───────────────── */
+.ai-upload-card{background:linear-gradient(140deg,#fff,var(--bg-soft) 200%);border:1px solid var(--line);border-radius:var(--radius-lg);padding:32px;margin-bottom:40px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden}
+.ai-upload-card::before{content:"";position:absolute;top:-100px;right:-100px;width:300px;height:300px;background:radial-gradient(circle,rgba(14,159,110,.12),transparent 70%);border-radius:50%;pointer-events:none}
+.ai-upload-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px;align-items:center;position:relative}
+@media (max-width:820px){.ai-upload-grid{grid-template-columns:1fr;gap:24px}}
+.ai-upload-copy h3{font-family:var(--serif);font-size:1.45rem;font-weight:480;letter-spacing:-.015em;line-height:1.2;margin:6px 0 10px;color:var(--ink);font-variation-settings:"opsz" 96}
+.ai-upload-copy h3 em{font-style:italic;color:var(--accent-deep)}
+.ai-upload-copy p{color:var(--ink-2);font-size:.95rem;line-height:1.55;max-width:420px}
+.ai-upload-zone{background:#fff;border:2px dashed var(--line);border-radius:14px;padding:28px 20px;text-align:center;cursor:pointer;transition:all .2s;min-height:200px;display:flex;align-items:center;justify-content:center}
+.ai-upload-zone:hover,.ai-upload-zone:focus,.ai-upload-zone.dragover{border-color:var(--accent);background:var(--accent-soft);outline:none}
+.ai-upload-zone.dragover{transform:scale(1.01)}
+.ai-upload-prompt svg{margin:0 auto 14px;color:var(--accent-deep)}
+.ai-upload-prompt h4{font-family:var(--serif);font-size:1.1rem;font-weight:500;margin:0 0 6px;color:var(--ink)}
+.ai-upload-prompt p{color:var(--ink-3);font-size:.84rem;font-family:var(--mono);letter-spacing:.04em}
+.ai-upload-status{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%}
+.ai-upload-status.loading .ai-spinner{display:block}
+.ai-upload-status .ai-spinner{display:none;width:38px;height:38px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:aispin 0.7s linear infinite}
+@keyframes aispin{to{transform:rotate(360deg)}}
+.ai-upload-status .ai-success{display:none;width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;align-items:center;justify-content:center}
+.ai-upload-status.success .ai-success{display:flex}
+.ai-upload-status .ai-error{display:none;width:44px;height:44px;border-radius:50%;background:var(--warn);color:#fff;align-items:center;justify-content:center}
+.ai-upload-status.error .ai-error{display:flex}
+.ai-upload-status h4{font-family:var(--serif);font-size:1.05rem;font-weight:500;margin:4px 0 2px;color:var(--ink)}
+.ai-upload-status p{color:var(--ink-2);font-size:.86rem;margin:0}
+.ai-upload-status .file-meta{font-family:var(--mono);font-size:.74rem;color:var(--ink-3);margin-top:6px;letter-spacing:.04em}
+.ai-upload-status .ai-action-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;justify-content:center}
+.ai-upload-status .btn-mini{padding:6px 12px;font-size:.82rem;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink-2)}
+.ai-upload-status .btn-mini:hover{border-color:var(--ink-3);color:var(--ink)}

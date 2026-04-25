@@ -120,7 +120,8 @@
         e.preventDefault();
         e.stopPropagation();
         pickFile(function (file) {
-          showToast('Resume uploaded: ' + file.name + ' (' + formatBytes(file.size) + ')');
+          // Navigate to cover letter page where the upload zone lives,
+          // then run the parser pipeline.
           location.hash = '#cover';
           setTimeout(function () { applyCvFile(file); }, 350);
         }, '.pdf,.doc,.docx,.txt');
@@ -128,34 +129,450 @@
     }
 
     // ─── REAL FILE UPLOAD: cover letter zone ─────
-    function applyCvFile(file) {
+    // After upload we extract text (PDF/DOCX/TXT), parse it into structured
+    // resume data, auto-fill the resume builder form, generate a cover
+    // letter, and navigate the user to the resume page.
+
+    let parsedResume = null; // last parsed result, available app-wide
+
+    // ─── Text extraction from PDF / DOCX / TXT ───
+    async function extractTextFromFile(file) {
+      if (file.size > 12 * 1024 * 1024) {
+        throw new Error('File too large (max 12 MB)');
+      }
+      const ext = (file.name.split('.').pop() || '').toLowerCase();
+
+      if (ext === 'txt') {
+        return await file.text();
+      }
+      if (ext === 'pdf') {
+        if (typeof window.pdfjsLib === 'undefined') {
+          throw new Error('PDF library is still loading — please retry in a moment');
+        }
+        try {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        } catch (e) { /* ignore — already set */ }
+        const buffer = await file.arrayBuffer();
+        const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+        let out = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          let lastY = null;
+          for (const item of content.items) {
+            const y = item.transform ? item.transform[5] : null;
+            if (lastY !== null && y !== null && Math.abs(y - lastY) > 4) out += '\n';
+            out += item.str + ' ';
+            lastY = y;
+          }
+          out += '\n\n';
+        }
+        return out;
+      }
+      if (ext === 'docx') {
+        if (typeof window.mammoth === 'undefined') {
+          throw new Error('DOCX library is still loading — please retry in a moment');
+        }
+        const buffer = await file.arrayBuffer();
+        const result = await window.mammoth.extractRawText({ arrayBuffer: buffer });
+        return result.value || '';
+      }
+      if (ext === 'doc') {
+        // Old .doc format — try as text; extraction will be partial
+        return await file.text();
+      }
+      throw new Error('Unsupported file type: .' + ext);
+    }
+
+    // ─── Heuristic resume parser ────────────────
+    const SECTION_PATTERNS = [
+      { key: 'summary',        re: /^(professional\s+)?(summary|profile|objective|about\s+me)\s*:?\s*$/i },
+      { key: 'experience',     re: /^(work\s+|professional\s+)?(experience|employment|work\s+history|career\s+history)\s*:?\s*$/i },
+      { key: 'education',      re: /^(education|academic\s+(background|history)|qualifications)\s*:?\s*$/i },
+      { key: 'skills',         re: /^(technical\s+|core\s+|key\s+)?(skills|competencies|expertise|technologies|tech\s+stack)\s*:?\s*$/i },
+      { key: 'projects',       re: /^(projects|side\s+projects|portfolio|notable\s+projects)\s*:?\s*$/i },
+      { key: 'certifications', re: /^(certifications?|certificates|licenses)\s*:?\s*$/i }
+    ];
+
+    const DATE_RE = /(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*)?(?:19|20)\d{2}\s*(?:[-–—to]+|\u2013|\u2014)\s*(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*)?(?:Present|Current|Now|present|current|now|(?:19|20)\d{2})/;
+
+    function detectSection(line) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.length > 50) return null;
+      for (const p of SECTION_PATTERNS) {
+        if (p.re.test(trimmed)) return p.key;
+      }
+      return null;
+    }
+
+    function splitIntoSections(text) {
+      const lines = text.split(/\r?\n/);
+      const out = { _header: [] };
+      let current = '_header';
+      for (const raw of lines) {
+        const detected = detectSection(raw);
+        if (detected) {
+          current = detected;
+          if (!out[current]) out[current] = [];
+        } else {
+          if (!out[current]) out[current] = [];
+          out[current].push(raw);
+        }
+      }
+      const result = {};
+      Object.keys(out).forEach(function (k) {
+        result[k] = (out[k] || []).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+      });
+      return result;
+    }
+
+    function parseSkills(text) {
+      if (!text) return [];
+      // Strip section header line, then split on common separators
+      return text
+        .split(/[,•|\n·;]+/)
+        .map(function (s) { return s.replace(/^[-*]\s*/, '').trim(); })
+        .filter(function (s) { return s && s.length > 1 && s.length < 50 && !/^\d+$/.test(s); })
+        .slice(0, 30);
+    }
+
+    function parseExperiences(text) {
+      if (!text) return [];
+      const lines = text.split(/\r?\n/).map(function (l) { return l.replace(/\t/g, '  '); }).filter(function (l) { return l.trim(); });
+      const entries = [];
+      let current = null;
+
+      function pushCurrent() {
+        if (current && (current.role || current.company || current.bullets.length)) {
+          entries.push(current);
+        }
+        current = null;
+      }
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        const dateMatch = line.match(DATE_RE);
+        const isBullet = /^\s*[-•·*▪◦]\s+/.test(line);
+        const looksLikeHeader = !!dateMatch && !isBullet;
+
+        if (looksLikeHeader) {
+          pushCurrent();
+          const dates = dateMatch[0].trim();
+          const beforeDate = line.slice(0, dateMatch.index).trim();
+          // Header could be "Role Title 2022 - Present" or "Company 2022 - Present"
+          // Heuristic: if next line looks like a company (no leading bullet, short),
+          // assume beforeDate is the role and next line is the company.
+          let role = beforeDate;
+          let company = '';
+          const next = (i + 1 < lines.length) ? lines[i + 1].trim() : '';
+          if (next && !/^[-•·*▪◦]/.test(next) && !DATE_RE.test(next) && next.length < 80 && !detectSection(next)) {
+            company = next;
+          }
+          current = { role: role, company: company, dates: dates, bullets: [] };
+          if (company) i++;
+        } else if (current && isBullet) {
+          current.bullets.push(trimmed.replace(/^[-•·*▪◦]\s+/, ''));
+        } else if (current && current.bullets.length === 0 && !current.company && trimmed.length < 80) {
+          // A line right after the header with no bullet — treat as company
+          current.company = trimmed;
+        } else if (current && current.bullets.length > 0 && trimmed.length > 30) {
+          // Wrapping line of previous bullet
+          current.bullets[current.bullets.length - 1] += ' ' + trimmed;
+        }
+      }
+      pushCurrent();
+
+      // Clean up: trim, dedupe consecutive identical bullets
+      return entries.map(function (e) {
+        return {
+          role: (e.role || '').trim(),
+          company: (e.company || '').trim(),
+          dates: (e.dates || '').trim(),
+          bullets: e.bullets.map(function (b) { return b.trim(); }).filter(Boolean).slice(0, 8)
+        };
+      }).filter(function (e) { return e.role || e.company || e.bullets.length; });
+    }
+
+    function parseEducations(text) {
+      if (!text) return [];
+      const lines = text.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+      const out = [];
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // Skip pure date lines
+        if (/^\s*(\d{4}\s*[-–—]\s*(\d{4}|present)|\d{4})\s*$/i.test(line)) continue;
+        // Look for degree-like lines (e.g., "BFA, Visual Design — RISD, 2014")
+        if (/\b(BS|BA|BFA|BSc|BBA|MBA|MS|MA|MFA|PhD|Bachelor|Master|Doctorate|Associate|Diploma|Certificate)\b/i.test(line) ||
+            /\bUniversity\b|\bCollege\b|\bInstitute\b|\bSchool\b/i.test(line)) {
+          out.push(line);
+        } else if (out.length === 0 && line.length < 120) {
+          out.push(line);
+        }
+      }
+      return out.slice(0, 4);
+    }
+
+    function parseResume(text) {
+      const result = {
+        name: '', title: '', email: '', phone: '', location: '',
+        summary: '', skills: [], experiences: [], educations: []
+      };
+
+      if (!text || text.trim().length < 20) return result;
+
+      // Email
+      const emailMatch = text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+      if (emailMatch) result.email = emailMatch[0];
+
+      // Phone
+      const phoneMatch = text.match(/(\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/);
+      if (phoneMatch) result.phone = phoneMatch[0].trim();
+
+      // Name + title — look at the first 8 non-empty lines
+      const allLines = text.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+      const top = allLines.slice(0, 10);
+      for (let i = 0; i < top.length; i++) {
+        const line = top[i];
+        if (line.length < 3 || line.length > 60) continue;
+        if (line.includes('@')) continue;
+        if (/^(\+?\d|\()/.test(line)) continue; // phone-like
+        if (/^(resume|cv|curriculum)/i.test(line)) continue;
+        // A name is usually 2-4 capitalized words
+        const words = line.split(/\s+/);
+        if (words.length >= 1 && words.length <= 5 && /^[A-Z]/.test(words[0])) {
+          result.name = line;
+          // Next non-trivial line might be the title
+          for (let j = i + 1; j < Math.min(i + 4, top.length); j++) {
+            const cand = top[j];
+            if (cand.length < 3 || cand.length > 80) continue;
+            if (cand.includes('@') || /^\+?\d/.test(cand)) continue;
+            if (detectSection(cand)) break;
+            if (cand === result.name) continue;
+            result.title = cand;
+            break;
+          }
+          break;
+        }
+      }
+
+      // Location — City, State patterns
+      const locMatch = text.match(/[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*,\s+[A-Z]{2}(?:\s+\d{5})?/);
+      if (locMatch) result.location = locMatch[0];
+      else {
+        // City, Country pattern
+        const locMatch2 = text.match(/\b[A-Z][a-zA-Z]+,\s+[A-Z][a-zA-Z]+\b/);
+        if (locMatch2 && locMatch2[0].length < 40) result.location = locMatch2[0];
+      }
+
+      // Sections
+      const sections = splitIntoSections(text);
+      if (sections.summary) {
+        result.summary = sections.summary
+          .split(/\r?\n/)
+          .map(function (l) { return l.trim(); })
+          .filter(Boolean)
+          .join(' ')
+          .slice(0, 600);
+      }
+      if (sections.skills) result.skills = parseSkills(sections.skills);
+      if (sections.experience) result.experiences = parseExperiences(sections.experience);
+      if (sections.education) result.educations = parseEducations(sections.education);
+
+      return result;
+    }
+
+    // ─── Upload zone state setters ───────────────
+    function showCvAnalyzing(file) {
       const zone = byId('cvUpload');
       if (!zone) return;
+      zone.className = 'upload-zone analyzing';
       zone.innerHTML =
-        '<svg width="28" height="28" viewBox="0 0 28 28" fill="none">' +
-          '<circle cx="14" cy="14" r="12" stroke="currentColor" stroke-width="1.6"/>' +
-          '<path d="M9 14l3.5 3.5L19 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' +
-        '</svg>' +
-        '<h3 style="font-size:1.05rem">' + escapeHtml(file.name) + '</h3>' +
-        '<p>' + formatBytes(file.size) + ' &middot; Ready to use as reference</p>' +
-        '<button class="btn btn-ghost" type="button" data-action="replace-cv">Replace file</button>' +
-        '<div class="formats">Uploaded ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</div>';
-      zone.classList.remove('dragover');
-      zone.dataset.fileLoaded = '1';
+        '<div class="spinner" aria-hidden="true"></div>' +
+        '<h3 style="font-size:1.05rem">Analyzing your resume…</h3>' +
+        '<p>Reading <b>' + escapeHtml(file.name) + '</b> &middot; ' + formatBytes(file.size) + '</p>' +
+        '<div class="formats">Extracting structure with AI parsing</div>';
+    }
 
-      // For .txt files we can read content as a helpful confirmation.
-      if (/\.txt$/i.test(file.name)) {
-        const reader = new FileReader();
-        reader.onload = function (ev) {
-          const txt = (ev.target.result || '').toString();
-          showToast('Read ' + file.name + ' (' + txt.length.toLocaleString() + ' chars)');
-        };
-        reader.onerror = function () { showToast('Could not read file contents'); };
-        reader.readAsText(file);
+    function showCvSuccess(file, parsed) {
+      const zone = byId('cvUpload');
+      if (!zone) return;
+      zone.className = 'upload-zone success';
+      zone.innerHTML =
+        '<span class="ok-ring"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M5 10l3.5 3.5L15 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' +
+        '<h3 style="font-size:1.05rem">Resume successfully parsed</h3>' +
+        '<p>' + escapeHtml(file.name) + ' &middot; ' + formatBytes(file.size) + '</p>' +
+        '<div class="parse-stats">' +
+          '<span><b>' + parsed.experiences.length + '</b> ' + (parsed.experiences.length === 1 ? 'experience' : 'experiences') + '</span>' +
+          '<span><b>' + parsed.skills.length + '</b> skills</span>' +
+          '<span><b>' + parsed.educations.length + '</b> ' + (parsed.educations.length === 1 ? 'degree' : 'degrees') + '</span>' +
+        '</div>' +
+        '<button class="btn btn-ghost" type="button" data-action="replace-cv" style="margin-top:14px">Replace file</button>';
+    }
+
+    function showCvError(file, message) {
+      const zone = byId('cvUpload');
+      if (!zone) return;
+      zone.className = 'upload-zone error';
+      zone.innerHTML =
+        '<span class="err-ring"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 5v6M10 14v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>' +
+        '<h3 style="font-size:1.05rem">Could not process file</h3>' +
+        '<p>' + escapeHtml(message || 'Unknown error') + '</p>' +
+        '<button class="btn btn-ghost" type="button" data-action="replace-cv" style="margin-top:14px">Try another file</button>';
+    }
+
+    // ─── Apply parsed data to the resume builder form ───
+    function applyParsedToForm(parsed) {
+      const form = byId('resumeForm');
+      if (!form) return;
+
+      function setField(key, val) {
+        const f = form.querySelector('[data-field="' + key + '"]');
+        if (f && val) f.value = val;
+      }
+
+      setField('name', parsed.name);
+      setField('title', parsed.title);
+      setField('email', parsed.email);
+      setField('phone', parsed.phone);
+      setField('location', parsed.location);
+      setField('summary', parsed.summary);
+      if (parsed.skills.length) setField('skills', parsed.skills.join(', '));
+      if (parsed.educations[0]) setField('education', parsed.educations[0]);
+
+      const exp = parsed.experiences[0];
+      if (exp) {
+        setField('role1', exp.role);
+        setField('company1', exp.company);
+        setField('dates1', exp.dates);
+        if (exp.bullets.length) setField('bullets1', exp.bullets.join('\n'));
+      }
+
+      // Trigger live preview via the form's input listener
+      form.dispatchEvent(new Event('input', { bubbles: true }));
+
+      // If there are additional experiences, render them in the preview below role1
+      renderAdditionalExperiences(parsed);
+    }
+
+    function renderAdditionalExperiences(parsed) {
+      const preview = byId('resumePreview');
+      if (!preview) return;
+      // Remove any prior extra-experiences block
+      const prior = preview.querySelector('.rp-extra-block');
+      if (prior) prior.remove();
+      if (parsed.experiences.length <= 1) return;
+
+      const extras = parsed.experiences.slice(1, 5);
+      const wrap = document.createElement('div');
+      wrap.className = 'rp-extra-block';
+      wrap.innerHTML = extras.map(function (e) {
+        return '<div class="item">' +
+          '<div class="item-head"><b>' + escapeHtml(e.role || 'Role') + '</b><time>' + escapeHtml(e.dates || '') + '</time></div>' +
+          (e.company ? '<div class="org">' + escapeHtml(e.company) + '</div>' : '') +
+          (e.bullets.length ? '<ul>' + e.bullets.map(function (b) { return '<li>' + escapeHtml(b) + '</li>'; }).join('') + '</ul>' : '') +
+        '</div>';
+      }).join('');
+
+      // Insert after the existing experience item, before "Skills" h3
+      const existingExpItem = preview.querySelector('.item');
+      if (existingExpItem && existingExpItem.parentNode) {
+        existingExpItem.parentNode.insertBefore(wrap, existingExpItem.nextSibling);
+      } else {
+        preview.appendChild(wrap);
+      }
+
+      // Mark the preview so we know it has parsed extras (used by export)
+      preview.dataset.hasExtras = '1';
+    }
+
+    // ─── Apply parsed data to the cover letter form + draft a letter ───
+    function applyParsedToCoverLetter(parsed) {
+      const setCl = function (k, val) {
+        const el = $('[data-cl="' + k + '"]');
+        if (el && val) el.value = val;
+      };
+      setCl('name', parsed.name);
+
+      const out = byId('coverOutput');
+      if (!out) return;
+
+      const name = parsed.name || 'Candidate';
+      const firstName = (name.split(' ')[0] || 'Candidate').trim();
+      const recent = parsed.experiences[0] || {};
+      const recentRole = recent.role || 'similar roles';
+      const recentCompany = recent.company || 'my previous company';
+      const skillsList = parsed.skills.slice(0, 4);
+      const skillsPhrase = skillsList.length
+        ? skillsList.slice(0, -1).join(', ') + (skillsList.length > 1 ? ', and ' : '') + skillsList[skillsList.length - 1]
+        : 'a strong, well-rounded skill set';
+      const yearsExp = parsed.experiences.length;
+      const expPhrase = yearsExp > 1
+        ? 'Across ' + yearsExp + ' roles, '
+        : (recentCompany ? 'At ' + recentCompany + ', ' : '');
+
+      const para1 = "I'm writing to express my interest in joining your team. With direct experience as " + recentRole +
+        (recentCompany ? ' at ' + recentCompany : '') +
+        ", I bring a working knowledge of " + skillsPhrase + ' — and a track record of turning that into shipped work.';
+
+      const para2 = expPhrase + "I've focused on doing the work, not just describing it: " +
+        (recent.bullets[0] ? recent.bullets[0].toLowerCase().replace(/\.$/, '') + ', ' : '') +
+        'and helping the team move faster as a result. I would bring the same focus and care to your team.';
+
+      const para3 = "I'd welcome the chance to talk about how my experience maps to what you're building. " +
+        "Thank you for the consideration — I look forward to hearing from you.";
+
+      out.innerHTML =
+        '<div class="from">' + escapeHtml(name) +
+          (parsed.email ? '<br/>' + escapeHtml(parsed.email) : '') +
+          (parsed.phone ? ' &middot; ' + escapeHtml(parsed.phone) : '') +
+        '</div>' +
+        '<div class="salute">Dear Hiring Team,</div>' +
+        '<p>' + escapeHtml(para1) + '</p>' +
+        '<p>' + escapeHtml(para2) + '</p>' +
+        '<p>' + escapeHtml(para3) + '</p>' +
+        '<div class="sign">Warmly,<br/>' + escapeHtml(firstName) + '</div>';
+      updateWordCount();
+    }
+
+    // ─── End-to-end pipeline ─────────────────────
+    async function processCvFile(file) {
+      showCvAnalyzing(file);
+      try {
+        const text = await extractTextFromFile(file);
+        if (!text || text.trim().length < 30) {
+          throw new Error('Could not read enough text from this file (it may be image-only)');
+        }
+        const parsed = parseResume(text);
+        if (!parsed.name && !parsed.email && parsed.experiences.length === 0) {
+          throw new Error('No structured resume content detected. Try a different file or paste the text manually.');
+        }
+        parsedResume = parsed;
+        applyParsedToForm(parsed);
+        applyParsedToCoverLetter(parsed);
+        showCvSuccess(file, parsed);
+        showToast('Resume successfully generated · auto-filled');
+        // Navigate to resume page to show the filled form + preview
+        setTimeout(function () {
+          if ((location.hash || '').replace('#', '').split('?')[0] !== 'resume') {
+            location.hash = '#resume';
+          }
+        }, 600);
+      } catch (err) {
+        console.error(err);
+        showCvError(file, err.message);
+        showToast('Parsing failed · ' + (err.message || 'unknown error'));
       }
     }
 
-    on(byId('cvUpload'), 'click', function () {
+    // Expose old name as an alias so other parts of the code (home button,
+    // drag-and-drop, replace-cv handler) trigger the new pipeline too.
+    function applyCvFile(file) { processCvFile(file); }
+
+    on(byId('cvUpload'), 'click', function (e) {
+      // If a [data-action] inside the zone was clicked (Replace, Try again),
+      // open the picker; otherwise also open the picker on a generic zone click.
       pickFile(applyCvFile, '.pdf,.doc,.docx,.txt');
     });
 
@@ -200,6 +617,168 @@
         else applyToolsFile(f);
       });
     });
+
+    // ─── AI upload zone on the Resume Builder page ───
+    // Different DOM structure (nested prompt + status divs), so it has its
+    // own renderers but shares the same parser pipeline.
+    function setAiState(state) {
+      const zone = byId('aiUploadZone');
+      const prompt = byId('aiUploadPrompt');
+      const status = byId('aiUploadStatus');
+      if (!zone || !status) return;
+      if (state === 'idle') {
+        if (prompt) prompt.style.display = '';
+        status.hidden = true;
+        status.className = 'ai-upload-status';
+        status.innerHTML = '';
+      } else {
+        if (prompt) prompt.style.display = 'none';
+        status.hidden = false;
+        status.className = 'ai-upload-status ' + state;
+      }
+    }
+
+    function showAiAnalyzing(file) {
+      setAiState('loading');
+      const status = byId('aiUploadStatus');
+      if (!status) return;
+      status.innerHTML =
+        '<div class="ai-spinner"></div>' +
+        '<h4>Analyzing your resume…</h4>' +
+        '<p>Reading <b>' + escapeHtml(file.name) + '</b> &middot; ' + formatBytes(file.size) + '</p>' +
+        '<div class="file-meta">Extracting text and structure</div>';
+    }
+
+    function showAiSuccess(file, parsed) {
+      setAiState('success');
+      const status = byId('aiUploadStatus');
+      if (!status) return;
+      const exps = parsed.experiences ? parsed.experiences.length : 0;
+      const eds = parsed.educations ? parsed.educations.length : 0;
+      const sks = parsed.skills ? parsed.skills.length : 0;
+      const detail = [
+        parsed.name && 'name',
+        parsed.email && 'email',
+        exps && (exps + (exps === 1 ? ' role' : ' roles')),
+        eds && (eds + (eds === 1 ? ' degree' : ' degrees')),
+        sks && (sks + ' skills')
+      ].filter(Boolean).join(' · ');
+      status.innerHTML =
+        '<div class="ai-success"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M5 11l4 4 8-8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
+        '<h4>Resume successfully generated</h4>' +
+        '<p>Detected: ' + escapeHtml(detail || 'content') + '</p>' +
+        '<div class="file-meta">' + escapeHtml(file.name) + ' &middot; ' + formatBytes(file.size) + '</div>' +
+        '<div class="ai-action-row">' +
+          '<button type="button" class="btn-mini" data-zone-action="reset">Upload another</button>' +
+        '</div>';
+    }
+
+    function showAiError(file, message) {
+      setAiState('error');
+      const status = byId('aiUploadStatus');
+      if (!status) return;
+      status.innerHTML =
+        '<div class="ai-error"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M6 6l10 10M16 6l-10 10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></div>' +
+        '<h4>Could not parse file</h4>' +
+        '<p>' + escapeHtml(message || 'Try a different file (PDF, DOCX, or TXT).') + '</p>' +
+        '<div class="ai-action-row">' +
+          '<button type="button" class="btn-mini" data-zone-action="reset">Try another file</button>' +
+        '</div>';
+    }
+
+    // Generic pipeline runner — shares all logic, swaps the renderers.
+    async function runResumePipeline(file, renderers) {
+      renderers.analyzing(file);
+      try {
+        const text = await extractTextFromFile(file);
+        if (!text || text.trim().length < 30) {
+          throw new Error('Could not read enough text — the file may be a scanned image.');
+        }
+        const parsed = parseResume(text);
+        const hasContent = parsed.name || parsed.email || (parsed.experiences && parsed.experiences.length);
+        if (!hasContent) {
+          // Fallback: dump raw text into the summary field so the form is still usable
+          const form = byId('resumeForm');
+          const summary = form && form.querySelector('[data-field="summary"]');
+          if (summary) {
+            summary.value = text.slice(0, 600).replace(/\s+/g, ' ').trim();
+            try { form.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+          }
+          throw new Error('No structured fields detected. Loaded raw text into the summary so you can edit manually.');
+        }
+        parsedResume = parsed;
+        applyParsedToForm(parsed);
+        applyParsedToCoverLetter(parsed);
+        renderers.success(file, parsed);
+        showToast('Resume successfully generated · auto-filled');
+      } catch (err) {
+        console.error(err);
+        renderers.error(file, err.message);
+        showToast('Parsing failed · ' + (err.message || 'unknown error'));
+      }
+    }
+
+    const aiZone = byId('aiUploadZone');
+    on(aiZone, 'click', function (e) {
+      const action = e.target && e.target.closest && e.target.closest('[data-zone-action]');
+      if (action) {
+        if (action.dataset.zoneAction === 'reset') setAiState('idle');
+        return;
+      }
+      pickFile(function (file) {
+        runResumePipeline(file, {
+          analyzing: showAiAnalyzing,
+          success: showAiSuccess,
+          error: showAiError
+        });
+      }, '.pdf,.docx,.txt');
+    });
+    on(aiZone, 'keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        aiZone.click();
+      }
+    });
+
+    if (aiZone) {
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        aiZone.addEventListener(ev, function (e) { e.preventDefault(); aiZone.classList.add('dragover'); });
+      });
+      aiZone.addEventListener('dragleave', function (e) { e.preventDefault(); aiZone.classList.remove('dragover'); });
+      aiZone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        aiZone.classList.remove('dragover');
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!f) return;
+        runResumePipeline(f, {
+          analyzing: showAiAnalyzing,
+          success: showAiSuccess,
+          error: showAiError
+        });
+      });
+    }
+
+    // Update the home "Upload Resume" button to route to the resume page
+    // and trigger the AI upload pipeline (instead of the cover-letter zone).
+    if (homeUploadBtn) {
+      // Remove the older listener by cloning the node, then re-bind
+      const newBtn = homeUploadBtn.cloneNode(true);
+      homeUploadBtn.parentNode.replaceChild(newBtn, homeUploadBtn);
+      newBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        location.hash = '#resume';
+        setTimeout(function () {
+          pickFile(function (file) {
+            runResumePipeline(file, {
+              analyzing: showAiAnalyzing,
+              success: showAiSuccess,
+              error: showAiError
+            });
+          }, '.pdf,.docx,.txt');
+        }, 250);
+      }, true);
+    }
 
     // ─── REAL PDF DOWNLOAD via html2pdf.js ───────
     function downloadAsPdf(elementId, filename) {
