@@ -593,6 +593,230 @@
       }, 600);
     });
 
+    // ─── Footer info modals ──────────────────────
+    const MODAL_CONTENT = {
+      'about': {
+        eyebrow: 'About',
+        title: 'Built for people on the <em>job hunt.</em>',
+        body:
+          '<p>CareerForge AI was started in 2024 by a team of designers and engineers who had spent too many evenings hand-formatting resumes for friends. We believed the writing should be the hard part — not the layout, the keyword game, or whether your file would even open in a recruiter\'s ATS.</p>' +
+          '<p>Today we\'re a small team based in San Francisco, with users in 87 countries. We\'re backed by operators from the design and recruiting worlds — and entirely focused on one thing: getting people the role they want, faster.</p>' +
+          '<div class="stat-grid">' +
+            '<div class="stat-card"><b>240k+</b><small>Job seekers helped</small></div>' +
+            '<div class="stat-card"><b>87</b><small>Countries</small></div>' +
+            '<div class="stat-card"><b>4.8 ★</b><small>Average rating</small></div>' +
+            '<div class="stat-card"><b>2024</b><small>Founded</small></div>' +
+          '</div>' +
+          '<div class="modal-cta"><a href="#contact" class="btn btn-accent" data-link data-modal-close>Get in touch</a></div>'
+      },
+      'careers': {
+        eyebrow: 'Careers',
+        title: 'Build careers — including <em>yours.</em>',
+        body:
+          '<p>We\'re a small remote-first team, hiring people who care about craft, communicate clearly, and want their work to actually help someone. We default to async, write things down, and ship in small steps.</p>' +
+          '<h3>Open roles</h3>' +
+          '<div class="role-list">' +
+            '<div class="role"><b>Senior Frontend Engineer</b><span>Remote · Full-time</span></div>' +
+            '<div class="role"><b>ML Engineer, Document Models</b><span>Remote · Full-time</span></div>' +
+            '<div class="role"><b>Product Designer</b><span>SF or Remote · Full-time</span></div>' +
+            '<div class="role"><b>Customer Success Lead</b><span>Remote · Full-time</span></div>' +
+          '</div>' +
+          '<p>Don\'t see your role? We\'re always open to hearing from talented people. Email <a href="mailto:careers@careerforge.ai">careers@careerforge.ai</a> with a short note about what you\'d want to work on.</p>'
+      },
+      'blog': {
+        eyebrow: 'Blog',
+        title: 'Job-hunt notes from <em>the field.</em>',
+        body:
+          '<p>Practical writing on resumes, interviews, and the hiring process — short, opinionated, and based on what we hear from real users.</p>' +
+          '<div class="post-list">' +
+            '<div class="post"><b>The 12 words recruiters scan for first</b><small>April 18, 2026 · 4 min read</small></div>' +
+            '<div class="post"><b>Why your cover letter is being ignored</b><small>April 4, 2026 · 6 min read</small></div>' +
+            '<div class="post"><b>How to write a one-page resume after 10 years of experience</b><small>March 22, 2026 · 8 min read</small></div>' +
+            '<div class="post"><b>ATS myths, debunked: the parsing rules nobody explains</b><small>March 9, 2026 · 5 min read</small></div>' +
+            '<div class="post"><b>The interview thank-you note that lands offers</b><small>February 27, 2026 · 3 min read</small></div>' +
+          '</div>' +
+          '<p style="margin-top:14px">Want new posts in your inbox? Email us at <a href="mailto:hello@careerforge.ai?subject=Subscribe%20to%20blog">hello@careerforge.ai</a>.</p>'
+      },
+      'resume-guide': {
+        eyebrow: 'Guide',
+        title: 'How to write a resume that <em>gets read.</em>',
+        body:
+          '<p>Recruiters spend an average of 6–8 seconds on a first pass. Your resume isn\'t being read — it\'s being scanned. Here\'s how to make those seconds count.</p>' +
+          '<h3>The structure that works</h3>' +
+          '<ul>' +
+            '<li><b>Top third:</b> name, title, contact, and 2–3 sentence summary that names the role you want and why you\'d be good at it.</li>' +
+            '<li><b>Middle:</b> 3–5 most recent roles, each with 3–5 achievement-focused bullets.</li>' +
+            '<li><b>Bottom:</b> skills, education, certifications. Keep it tight.</li>' +
+          '</ul>' +
+          '<h3>Bullets that don\'t put recruiters to sleep</h3>' +
+          '<ul>' +
+            '<li>Lead with a strong verb — <i>led, built, shipped, redesigned, mentored</i> — not <i>responsible for</i>.</li>' +
+            '<li>End with a number when you can — users, revenue, time saved, percentage lift.</li>' +
+            '<li>Show scope: team size, budget, geography, complexity.</li>' +
+          '</ul>' +
+          '<h3>Length</h3>' +
+          '<p>One page if you have under 8 years of experience. Two pages if more. Never three. Use the Resume Rewriter in CareerForge to tighten any bullet that feels long.</p>' +
+          '<div class="modal-cta"><a href="#resume" class="btn btn-accent" data-link data-modal-close>Open the builder</a></div>'
+      },
+      'cover-tips': {
+        eyebrow: 'Tips',
+        title: 'Cover letters that don\'t <em>sound like everyone else\'s.</em>',
+        body:
+          '<p>Most cover letters get skipped because they restate the resume. Yours shouldn\'t. Use the cover letter to do something the resume can\'t: tell a recruiter why this specific role at this specific company makes sense for you.</p>' +
+          '<h3>The four-paragraph formula</h3>' +
+          '<ol style="padding-left:20px;margin:0 0 14px">' +
+            '<li><b>Hook (2–3 sentences):</b> name the role, anchor your experience, hint at the angle you\'ll explore.</li>' +
+            '<li><b>Why this company (1 paragraph):</b> something specific they\'re doing — not just "I love your mission".</li>' +
+            '<li><b>What you bring (1 paragraph):</b> concrete experience that maps to their job description.</li>' +
+            '<li><b>Close (2 sentences):</b> short, warm, ask for a conversation.</li>' +
+          '</ol>' +
+          '<h3>Things to cut</h3>' +
+          '<ul>' +
+            '<li><i>"To Whom It May Concern"</i> — find a name, or write "Hiring Team".</li>' +
+            '<li><i>"I am writing to apply for..."</i> — they know that already.</li>' +
+            '<li>Quoting their mission statement back at them. They wrote it.</li>' +
+          '</ul>' +
+          '<div class="modal-cta"><a href="#cover" class="btn btn-accent" data-link data-modal-close>Try the cover letter builder</a></div>'
+      },
+      'ats-guide': {
+        eyebrow: 'Guide',
+        title: 'How applicant tracking systems <em>actually work.</em>',
+        body:
+          '<p>An applicant tracking system (ATS) is software that ingests your resume, parses it into structured fields, and lets recruiters search and filter applicants. Workday, Greenhouse, Lever, iCIMS, and Taleo handle the majority of large-company hiring.</p>' +
+          '<h3>What ATSes actually do</h3>' +
+          '<ul>' +
+            '<li><b>Parse</b> your resume into name, contact, work history, skills, and education.</li>' +
+            '<li><b>Index</b> the text so it\'s searchable by keywords.</li>' +
+            '<li><b>Score</b> matches against job descriptions (some, not all).</li>' +
+            '<li><b>Surface</b> the highest-match candidates to recruiters.</li>' +
+          '</ul>' +
+          '<h3>How to write a resume that parses cleanly</h3>' +
+          '<ul>' +
+            '<li>Use real text, not images of text. ATSes can\'t read images.</li>' +
+            '<li>Standard section headers: Experience, Education, Skills.</li>' +
+            '<li>Avoid two-column layouts, text in headers/footers, and tables.</li>' +
+            '<li>Standard fonts (Calibri, Arial, Helvetica, Garamond) and PDF or DOCX format.</li>' +
+            '<li>Match keywords from the job description — exactly, not paraphrased.</li>' +
+          '</ul>' +
+          '<p>The ATS Resume Checker in CareerForge runs your resume through these same parsing rules and tells you exactly what to fix.</p>' +
+          '<div class="modal-cta"><a href="#resume" class="btn btn-accent" data-link data-modal-close>Run an ATS check</a></div>'
+      },
+      'cookies': {
+        eyebrow: 'Legal',
+        title: 'Cookie Policy',
+        body:
+          '<p><b>Last updated:</b> April 12, 2026</p>' +
+          '<p>We use a small number of cookies and similar technologies to keep CareerForge working. We don\'t run ad-targeting cookies, and we don\'t share data with third-party advertisers.</p>' +
+          '<h3>Essential cookies</h3>' +
+          '<p>Used to keep you signed in, remember your plan, and preserve your preferences (theme, billing cycle). These cannot be disabled — the product wouldn\'t work without them.</p>' +
+          '<h3>Analytics cookies</h3>' +
+          '<p>We use a privacy-first analytics tool (no cross-site tracking, IP anonymization) to understand which features people use. You can disable analytics from <b>Account → Privacy</b> at any time.</p>' +
+          '<h3>Third-party cookies</h3>' +
+          '<p>The only third-party cookie we set is from Stripe (payment processor) on the checkout page. It\'s required for secure card processing. We do not use Facebook, Google Ads, or LinkedIn Insight pixels.</p>' +
+          '<h3>Managing cookies</h3>' +
+          '<p>You can control cookies in your browser settings. Disabling essential cookies will sign you out and prevent the app from saving your work.</p>' +
+          '<p>Questions? Email <a href="mailto:privacy@careerforge.ai">privacy@careerforge.ai</a>.</p>'
+      },
+      'dpa': {
+        eyebrow: 'Legal',
+        title: 'Data Processing Addendum',
+        body:
+          '<p>The Data Processing Addendum (DPA) is a contract that governs how CareerForge processes personal data on behalf of Business plan customers. It exists to satisfy GDPR, UK GDPR, CCPA, and similar privacy regulations when your team uses CareerForge to handle other people\'s information (e.g., recruiters using the platform with candidate data).</p>' +
+          '<h3>What\'s in our DPA</h3>' +
+          '<ul>' +
+            '<li>Definition of controller and processor roles between you and us.</li>' +
+            '<li>The categories of personal data we process and why.</li>' +
+            '<li>Subprocessors we use (current list: AWS, Stripe, Postmark, Datadog, OpenAI).</li>' +
+            '<li>Security measures we maintain — encryption, access controls, audit logging.</li>' +
+            '<li>How we handle data subject requests, breach notifications, and audits.</li>' +
+            '<li>International data transfer safeguards (Standard Contractual Clauses).</li>' +
+          '</ul>' +
+          '<h3>Who needs it</h3>' +
+          '<p>If you\'re using CareerForge as an individual job seeker, you don\'t need a DPA — your relationship with us is covered by our standard <a href="#privacy" data-modal-close>Privacy Policy</a>.</p>' +
+          '<p>If you\'re a Business-plan customer or considering one, email <a href="mailto:legal@careerforge.ai?subject=DPA%20request">legal@careerforge.ai</a> and we\'ll send a countersigned copy within one business day.</p>'
+      },
+      'security': {
+        eyebrow: 'Legal',
+        title: 'Our security practices.',
+        body:
+          '<p>Your resume and cover letter are personal documents. We treat them that way.</p>' +
+          '<h3>Encryption</h3>' +
+          '<ul>' +
+            '<li><b>In transit:</b> all traffic is TLS 1.3.</li>' +
+            '<li><b>At rest:</b> AES-256 encryption on every stored document, backup, and database snapshot.</li>' +
+          '</ul>' +
+          '<h3>Access controls</h3>' +
+          '<ul>' +
+            '<li>Production access is limited to a small on-call rotation, logged, and reviewed monthly.</li>' +
+            '<li>Two-factor authentication is required for all CareerForge employees.</li>' +
+            '<li>Customer documents are isolated per account; no team can see another team\'s data.</li>' +
+          '</ul>' +
+          '<h3>AI processing</h3>' +
+          '<p>When you generate a resume or cover letter, your input is sent to our AI processing layer over an encrypted channel. <b>Inputs are not retained for model training</b> and are deleted from processing logs within 30 days.</p>' +
+          '<h3>Compliance</h3>' +
+          '<ul>' +
+            '<li>SOC 2 Type II — annual audit (most recent: February 2026)</li>' +
+            '<li>GDPR &amp; UK GDPR compliant</li>' +
+            '<li>CCPA / CPRA compliant</li>' +
+            '<li>HIPAA controls available on Business plan (BAA on request)</li>' +
+          '</ul>' +
+          '<h3>Reporting a vulnerability</h3>' +
+          '<p>Found a security issue? Email <a href="mailto:security@careerforge.ai">security@careerforge.ai</a>. We respond within 24 hours and run a paid disclosure program for valid reports.</p>'
+      }
+    };
+
+    const modalOverlay = byId('modalOverlay');
+    const modalEyebrow = byId('modalEyebrow');
+    const modalTitle = byId('modalTitle');
+    const modalBody = byId('modalBody');
+    const modalClose = byId('modalClose');
+
+    function openModal(id) {
+      const content = MODAL_CONTENT[id];
+      if (!content || !modalOverlay) return;
+      setText(modalEyebrow, content.eyebrow || '');
+      setHTML(modalTitle, content.title || '');
+      setHTML(modalBody, content.body || '');
+      modalOverlay.classList.add('show');
+      modalOverlay.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('modal-open');
+      // Focus the close button for keyboard accessibility
+      setTimeout(function () { if (modalClose) modalClose.focus(); }, 50);
+    }
+
+    function closeModal() {
+      if (!modalOverlay) return;
+      modalOverlay.classList.remove('show');
+      modalOverlay.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('modal-open');
+    }
+
+    on(modalClose, 'click', closeModal);
+    on(modalOverlay, 'click', function (e) {
+      // Close when clicking on the backdrop (but not the modal content itself)
+      if (e.target === modalOverlay) closeModal();
+    });
+    on(document, 'keydown', function (e) {
+      if (e.key === 'Escape' && modalOverlay && modalOverlay.classList.contains('show')) {
+        closeModal();
+      }
+    });
+
+    // Open modal when [data-modal] is clicked. Use capture so it runs before
+    // the global [data-link] router (some links inside modals carry both).
+    document.addEventListener('click', function (e) {
+      const trigger = e.target && e.target.closest && e.target.closest('[data-modal]');
+      if (!trigger) {
+        // Also handle [data-modal-close] inside modal CTAs
+        const closer = e.target && e.target.closest && e.target.closest('[data-modal-close]');
+        if (closer) closeModal();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      openModal(trigger.dataset.modal);
+    }, true);
+
   } // end init()
 
   if (document.readyState === 'loading') {

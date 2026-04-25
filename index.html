@@ -1072,19 +1072,19 @@ Mentored 6 designers; reduced onboarding time by 3 weeks.</textarea>
         <ul>
           <li><a href="#contact" data-link>Contact</a></li>
           <li><a href="#faq" data-link>FAQ</a></li>
-          <li><a href="#" onclick="return false">About</a></li>
-          <li><a href="#" onclick="return false">Careers</a></li>
-          <li><a href="#" onclick="return false">Blog</a></li>
+          <li><a href="#about" data-modal="about">About</a></li>
+          <li><a href="#careers" data-modal="careers">Careers</a></li>
+          <li><a href="#blog" data-modal="blog">Blog</a></li>
         </ul>
       </div>
       <div>
         <h5>Resources</h5>
         <ul>
-          <li><a href="#" onclick="return false">Resume guide</a></li>
-          <li><a href="#" onclick="return false">Cover letter tips</a></li>
-          <li><a href="#" onclick="return false">ATS guide</a></li>
-          <li><a href="#" onclick="return false">Templates</a></li>
-          <li><a href="#" onclick="return false">Examples</a></li>
+          <li><a href="#resume-guide" data-modal="resume-guide">Resume guide</a></li>
+          <li><a href="#cover-tips" data-modal="cover-tips">Cover letter tips</a></li>
+          <li><a href="#ats-guide" data-modal="ats-guide">ATS guide</a></li>
+          <li><a href="#resume" data-link>Templates</a></li>
+          <li><a href="#resume" data-link>Examples</a></li>
         </ul>
       </div>
       <div>
@@ -1092,9 +1092,9 @@ Mentored 6 designers; reduced onboarding time by 3 weeks.</textarea>
         <ul>
           <li><a href="#privacy" data-link>Privacy Policy</a></li>
           <li><a href="#terms" data-link>Terms of Service</a></li>
-          <li><a href="#" onclick="return false">Cookie Policy</a></li>
-          <li><a href="#" onclick="return false">DPA</a></li>
-          <li><a href="#" onclick="return false">Security</a></li>
+          <li><a href="#cookies" data-modal="cookies">Cookie Policy</a></li>
+          <li><a href="#dpa" data-modal="dpa">DPA</a></li>
+          <li><a href="#security" data-modal="security">Security</a></li>
         </ul>
       </div>
     </div>
@@ -1104,6 +1104,18 @@ Mentored 6 designers; reduced onboarding time by 3 weeks.</textarea>
     </div>
   </div>
 </footer>
+
+<!-- MODAL (used for footer info content) -->
+<div class="modal-overlay" id="modalOverlay" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <button class="modal-close" id="modalClose" aria-label="Close">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+    <div class="modal-eyebrow" id="modalEyebrow"></div>
+    <h2 class="serif" id="modalTitle"></h2>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
 
 <div class="toast" id="toast">
   <svg viewBox="0 0 18 18" fill="none"><path d="M3 9l3 3 9-9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
