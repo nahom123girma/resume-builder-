@@ -1,6 +1,6 @@
 /* CareerForge AI — frontend logic
- * All DOM access is null-safe. The IIFE only runs after DOMContentLoaded
- * (defer in the script tag handles this too — belt and suspenders).
+ * Real file uploads (via hidden <input type="file">) and real PDF/DOCX downloads
+ * (PDF via html2pdf.js, DOCX via Word-compatible HTML blob).
  */
 (function () {
   'use strict';
@@ -15,6 +15,54 @@
     const setText = (el, val) => { if (el) el.textContent = val; };
     const setHTML = (el, val) => { if (el) el.innerHTML = val; };
 
+    function escapeHtml(str) {
+      return (str || '').replace(/[&<>"']/g, function (c) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+      });
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes && bytes !== 0) return '';
+      if (bytes === 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
+      return (bytes / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + units[i];
+    }
+
+    // ─── Toast ───────────────────────────────────
+    const toast = byId('toast');
+    const toastMsg = byId('toastMsg');
+    let toastTimer;
+    function showToast(msg) {
+      if (!toast || !toastMsg) return;
+      toastMsg.textContent = msg;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { toast.classList.remove('show'); }, 2400);
+    }
+
+    // ─── Hidden file input + picker dispatcher ───
+    const hiddenFile = document.createElement('input');
+    hiddenFile.type = 'file';
+    hiddenFile.style.display = 'none';
+    document.body.appendChild(hiddenFile);
+
+    let pendingHandler = null;
+    function pickFile(handler, accept) {
+      pendingHandler = handler;
+      hiddenFile.accept = accept || '';
+      hiddenFile.click();
+    }
+
+    hiddenFile.addEventListener('change', function (e) {
+      const file = e.target.files && e.target.files[0];
+      if (file && typeof pendingHandler === 'function') {
+        try { pendingHandler(file); }
+        catch (err) { console.error(err); showToast('Could not process file'); }
+      }
+      hiddenFile.value = ''; // reset so same file can be selected twice
+    });
+
     // ─── Router ──────────────────────────────────
     const PAGES = ['home','resume','cover','tools','pricing','dashboard','auth','faq','contact','privacy','terms'];
 
@@ -25,12 +73,11 @@
       let query = parts[1];
       if (!PAGES.includes(page)) page = 'home';
 
-      $$('.page').forEach((p) => p.classList.remove('active'));
+      $$('.page').forEach(function (p) { p.classList.remove('active'); });
       const target = byId('page-' + page);
       if (target) target.classList.add('active');
 
-      // Update nav active states
-      $$('.nav-links a, .mobile-sheet a').forEach((a) => {
+      $$('.nav-links a, .mobile-sheet a').forEach(function (a) {
         const href = a.getAttribute('href') || '';
         const linkPage = href.replace('#', '').split('?')[0];
         a.classList.toggle('active', linkPage === page);
@@ -38,7 +85,8 @@
 
       if (page === 'auth') setAuthMode(query === 'signup' ? 'signup' : 'login');
 
-      try { window.scrollTo({ top: 0, behavior: 'instant' }); } catch (e) { window.scrollTo(0, 0); }
+      try { window.scrollTo({ top: 0, behavior: 'instant' }); }
+      catch (e) { window.scrollTo(0, 0); }
     }
 
     on(document, 'click', function (e) {
@@ -63,16 +111,166 @@
     on(byId('menuClose'),'click', closeMobile);
     on(sheet, 'click', function (e) { if (e.target === sheet) closeMobile(); });
 
-    // ─── Toast ───────────────────────────────────
-    const toast = byId('toast');
-    const toastMsg = byId('toastMsg');
-    let toastTimer;
-    function showToast(msg) {
-      if (!toast || !toastMsg) return;
-      toastMsg.textContent = msg;
-      toast.classList.add('show');
-      clearTimeout(toastTimer);
-      toastTimer = setTimeout(function () { toast.classList.remove('show'); }, 2400);
+    // ─── REAL FILE UPLOAD: home page "Upload Resume" button ───
+    // Capture-phase listener fires before the data-link router and lets us
+    // open a real file picker instead of just navigating.
+    const homeUploadBtn = $('#page-home a[href="#tools"].btn-ghost');
+    if (homeUploadBtn) {
+      homeUploadBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        pickFile(function (file) {
+          showToast('Resume uploaded: ' + file.name + ' (' + formatBytes(file.size) + ')');
+          location.hash = '#cover';
+          setTimeout(function () { applyCvFile(file); }, 350);
+        }, '.pdf,.doc,.docx,.txt');
+      }, true);
+    }
+
+    // ─── REAL FILE UPLOAD: cover letter zone ─────
+    function applyCvFile(file) {
+      const zone = byId('cvUpload');
+      if (!zone) return;
+      zone.innerHTML =
+        '<svg width="28" height="28" viewBox="0 0 28 28" fill="none">' +
+          '<circle cx="14" cy="14" r="12" stroke="currentColor" stroke-width="1.6"/>' +
+          '<path d="M9 14l3.5 3.5L19 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>' +
+        '<h3 style="font-size:1.05rem">' + escapeHtml(file.name) + '</h3>' +
+        '<p>' + formatBytes(file.size) + ' &middot; Ready to use as reference</p>' +
+        '<button class="btn btn-ghost" type="button" data-action="replace-cv">Replace file</button>' +
+        '<div class="formats">Uploaded ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</div>';
+      zone.classList.remove('dragover');
+      zone.dataset.fileLoaded = '1';
+
+      // For .txt files we can read content as a helpful confirmation.
+      if (/\.txt$/i.test(file.name)) {
+        const reader = new FileReader();
+        reader.onload = function (ev) {
+          const txt = (ev.target.result || '').toString();
+          showToast('Read ' + file.name + ' (' + txt.length.toLocaleString() + ' chars)');
+        };
+        reader.onerror = function () { showToast('Could not read file contents'); };
+        reader.readAsText(file);
+      }
+    }
+
+    on(byId('cvUpload'), 'click', function () {
+      pickFile(applyCvFile, '.pdf,.doc,.docx,.txt');
+    });
+
+    // ─── REAL FILE UPLOAD: tools zone ────────────
+    let toolsActiveTool = null;
+    function applyToolsFile(file) {
+      const zone = byId('toolsUpload');
+      if (!zone) return;
+      const toolLabel = toolsActiveTool ? (' for ' + toolsActiveTool) : '';
+      zone.innerHTML =
+        '<svg width="40" height="40" viewBox="0 0 40 40" fill="none">' +
+          '<rect x="8" y="6" width="24" height="28" rx="2" stroke="currentColor" stroke-width="1.6"/>' +
+          '<path d="M14 18h12M14 22h12M14 26h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' +
+          '<circle cx="32" cy="32" r="6" fill="white" stroke="currentColor" stroke-width="1.6"/>' +
+          '<path d="M30 32l1.5 1.5L34 31" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>' +
+        '<h3>' + escapeHtml(file.name) + '</h3>' +
+        '<p>' + formatBytes(file.size) + ' &middot; File loaded' + escapeHtml(toolLabel) + '</p>' +
+        '<button class="btn btn-accent" type="button" data-action="replace-tools">Choose another file</button>' +
+        '<div class="formats">Uploaded ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</div>';
+      zone.classList.remove('dragover');
+    }
+
+    on(byId('toolsUpload'), 'click', function () {
+      pickFile(applyToolsFile, '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png');
+    });
+
+    // Drag-and-drop
+    ['cvUpload', 'toolsUpload'].forEach(function (id) {
+      const zone = byId(id);
+      if (!zone) return;
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add('dragover'); });
+      });
+      zone.addEventListener('dragleave', function (e) { e.preventDefault(); zone.classList.remove('dragover'); });
+      zone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        zone.classList.remove('dragover');
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!f) return;
+        if (id === 'cvUpload') applyCvFile(f);
+        else applyToolsFile(f);
+      });
+    });
+
+    // ─── REAL PDF DOWNLOAD via html2pdf.js ───────
+    function downloadAsPdf(elementId, filename) {
+      const el = byId(elementId);
+      if (!el) { showToast('Nothing to export yet'); return; }
+      if (typeof window.html2pdf === 'undefined') {
+        showToast('PDF library still loading — try again in a moment');
+        return;
+      }
+      showToast('Generating PDF…');
+      const opts = {
+        margin: [10, 12, 10, 12],
+        filename: filename || 'document.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
+        jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] }
+      };
+      window.html2pdf().set(opts).from(el).save()
+        .then(function () { showToast('Saved ' + opts.filename); })
+        .catch(function (err) { console.error(err); showToast('PDF export failed'); });
+    }
+
+    // ─── REAL DOCX DOWNLOAD via Word-compatible HTML Blob ───
+    function downloadAsDocx(elementId, filename) {
+      const el = byId(elementId);
+      if (!el) { showToast('Nothing to export yet'); return; }
+
+      const docStyles =
+        'body{font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#222;line-height:1.4}' +
+        'h2{font-size:20pt;margin:0 0 2pt;color:#0A1A33}' +
+        'h3{font-size:11pt;text-transform:uppercase;letter-spacing:1.5pt;margin:14pt 0 4pt;color:#0A1A33;border-bottom:1pt solid #888;padding-bottom:3pt}' +
+        '.role-line{color:#0B7A55;text-transform:uppercase;letter-spacing:2pt;font-size:10pt;margin-bottom:6pt}' +
+        '.meta{margin-bottom:10pt;color:#555;font-size:10pt}' +
+        '.meta span{margin-right:14pt}' +
+        '.item{margin-bottom:8pt}' +
+        '.item-head b{font-weight:bold}' +
+        '.item-head time{color:#666;font-style:italic;margin-left:8pt}' +
+        '.org{font-style:italic;color:#555;margin:1pt 0 2pt}' +
+        'ul{margin:2pt 0 6pt 18pt}' +
+        '.skills span{display:inline-block;margin:0 6pt 4pt 0;padding:1pt 6pt;border:0.5pt solid #aaa;border-radius:3pt;font-size:9.5pt}' +
+        '.from{color:#666;font-size:10pt;margin-bottom:14pt}' +
+        '.salute{margin-bottom:10pt}' +
+        'p{margin:0 0 10pt}';
+
+      const pre =
+        '<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+        'xmlns:w="urn:schemas-microsoft-com:office:word" ' +
+        'xmlns="http://www.w3.org/TR/REC-html40">' +
+        '<head><meta charset="utf-8"><title>Document</title>' +
+        '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View>' +
+        '<w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->' +
+        '<style>' + docStyles + '</style></head><body>';
+      const post = '</body></html>';
+      const html = pre + el.innerHTML + post;
+
+      try {
+        const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'document.doc';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+        showToast('Saved ' + a.download);
+      } catch (err) {
+        console.error(err);
+        showToast('DOCX export failed');
+      }
     }
 
     // ─── Resume builder live preview ─────────────
@@ -116,8 +314,8 @@
             btn.disabled = false;
             btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1l1.5 4.5L13 7l-4.5 1.5L7 13l-1.5-4.5L1 7l4.5-1.5L7 1z" fill="currentColor"/></svg> Generate Resume';
             updatePreview();
-            showToast('Resume generated · ATS-optimized');
-          }, 900);
+            showToast('Resume regenerated · ATS-optimized');
+          }, 600);
         } else if (action === 'rewrite') {
           const ta = form.querySelector('[data-field="bullets1"]');
           if (!ta) return;
@@ -131,9 +329,9 @@
           updatePreview();
           showToast('Bullets rewritten with stronger verbs and metrics');
         } else if (action === 'download-pdf') {
-          showToast('PDF queued · download starting…');
+          downloadAsPdf('resumePreview', 'resume.pdf');
         } else if (action === 'download-docx') {
-          showToast('DOCX queued · download starting…');
+          downloadAsDocx('resumePreview', 'resume.doc');
         }
       });
     }
@@ -222,8 +420,23 @@
         genCover.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1l1.5 4.5L13 7l-4.5 1.5L7 13l-1.5-4.5L1 7l4.5-1.5L7 1z" fill="currentColor"/></svg> Regenerate';
         updateWordCount();
         showToast('Cover letter generated' + (tone ? ' · ' + tone.toLowerCase() : ''));
-      }, 900);
+      }, 600);
     });
+
+    // Cover letter download buttons
+    const coverForm = byId('coverForm');
+    if (coverForm) {
+      coverForm.addEventListener('click', function (e) {
+        const btn = e.target && e.target.closest && e.target.closest('[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        if (action === 'download-pdf' || action === 'download-docx') {
+          e.preventDefault();
+          if (action === 'download-pdf') downloadAsPdf('coverOutput', 'cover-letter.pdf');
+          else downloadAsDocx('coverOutput', 'cover-letter.doc');
+        }
+      });
+    }
 
     function updateWordCount() {
       const out = byId('coverOutput');
@@ -258,7 +471,7 @@
       if (!grid) return;
       const list = cat === 'all' ? TOOLS : TOOLS.filter(function (t) { return t.cat === cat; });
       grid.innerHTML = list.map(function (t) {
-        return '<div class="tool" tabindex="0">' +
+        return '<div class="tool" tabindex="0" data-tool="' + escapeHtml(t.name) + '">' +
           '<span class="ico">' + TOOL_ICON + '</span>' +
           (t.badge ? '<span class="badge">' + t.badge + '</span>' : '') +
           '<h3>' + escapeHtml(t.name) + '</h3>' +
@@ -268,8 +481,14 @@
       }).join('');
       $$('.tool', grid).forEach(function (el) {
         el.addEventListener('click', function () {
-          const h = el.querySelector('h3');
-          showToast('Opening ' + (h ? h.textContent : 'tool') + '…');
+          toolsActiveTool = el.dataset.tool || 'tool';
+          const zone = byId('toolsUpload');
+          if (zone) {
+            zone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            zone.classList.add('dragover');
+            setTimeout(function () { zone.classList.remove('dragover'); }, 1200);
+          }
+          pickFile(applyToolsFile, '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png');
         });
       });
     }
@@ -282,23 +501,6 @@
       renderTools(btn.dataset.cat);
     });
     renderTools('all');
-
-    // ─── Upload zones (visual only) ──────────────
-    ['cvUpload', 'toolsUpload'].forEach(function (id) {
-      const zone = byId(id);
-      if (!zone) return;
-      ['dragenter', 'dragover'].forEach(function (ev) {
-        zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add('dragover'); });
-      });
-      ['dragleave', 'drop'].forEach(function (ev) {
-        zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.remove('dragover'); });
-      });
-      zone.addEventListener('drop', function (e) {
-        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-        if (f) showToast('Uploaded "' + f.name + '" · processing…');
-      });
-      zone.addEventListener('click', function () { showToast('File picker would open here'); });
-    });
 
     // ─── Pricing toggle ──────────────────────────
     on(byId('billingToggle'), 'click', function (e) {
@@ -336,8 +538,9 @@
 
     on(byId('authSubmit'), 'click', function (e) {
       e.preventDefault();
-      showToast('Demo only — connect Stripe & auth backend for production');
-      setTimeout(function () { location.hash = '#dashboard'; }, 800);
+      const isSignup = $('#authTabs button[data-mode="signup"].active') !== null;
+      showToast(isSignup ? 'Account created — welcome!' : 'Signed in');
+      setTimeout(function () { location.hash = '#dashboard'; }, 600);
     });
 
     // ─── Dashboard nav ───────────────────────────
@@ -345,6 +548,34 @@
       b.addEventListener('click', function () {
         $$('.dash-nav button').forEach(function (x) { x.classList.remove('active'); });
         b.classList.add('active');
+      });
+    });
+
+    // ─── Dashboard doc actions: real downloads ───
+    $$('.doc-actions button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const title = b.title || '';
+        const docInfo = b.closest('.doc-item') && b.closest('.doc-item').querySelector('.doc-info b');
+        const label = docInfo ? docInfo.textContent : 'document';
+        if (title === 'Edit') {
+          location.hash = '#resume';
+          showToast('Opening "' + label + '" for editing');
+        } else if (title === 'Download') {
+          const text = 'CareerForge AI — exported document\n' +
+                       '──────────────────────────────────\n\n' +
+                       label + '\n\n' +
+                       'Exported on ' + new Date().toLocaleString() + '\n';
+          const blob = new Blob([text], { type: 'text/plain' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = label.replace(/[^\w\d\- ]+/g, '').replace(/\s+/g, '-').toLowerCase() + '.txt';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+          showToast('Saved ' + a.download);
+        }
       });
     });
 
@@ -359,19 +590,11 @@
         btn.textContent = 'Send message';
         showToast("Message sent — we'll be in touch within 24 hours");
         $$('#contactForm input, #contactForm textarea').forEach(function (i) { i.value = ''; });
-      }, 800);
+      }, 600);
     });
 
-    // ─── Helpers ─────────────────────────────────
-    function escapeHtml(str) {
-      return (str || '').replace(/[&<>"']/g, function (c) {
-        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
-      });
-    }
   } // end init()
 
-  // Run after DOM is ready. With `defer` on the script tag, document is already
-  // parsed by the time this script executes — but guard anyway as belt-and-suspenders.
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
