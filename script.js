@@ -29,6 +29,370 @@
       return (bytes / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + units[i];
     }
 
+    // ─── Processing limits (per-tool budgets) ────
+    // Hard caps protect the browser from freezing; "soft" caps trigger the
+    // partial-processing modal so the user can pick how to proceed.
+    const LIMITS = {
+      global: { hardBytes: 10 * 1024 * 1024, softBytes: 5 * 1024 * 1024 },
+      pdf:        { hardBytes: 5 * 1024 * 1024, softPages: 5,  hardPages: 15 },
+      translator: { hardChars: 10000, softChars: 5000 },
+      ocr:        { hardBytes: 3 * 1024 * 1024, softPages: 1,  hardPages: 3 },
+      compressor: { hardBytes: 5 * 1024 * 1024 },
+      splitter:   { hardBytes: 5 * 1024 * 1024, softPages: 10 },
+      parsing:    { hardChars: 12000, softChars: 8000 }
+    };
+
+    // Check a file against the global ceiling first, then the per-tool budget.
+    // Returns { ok, partial, reason, recommendation }
+    function checkFileLimits(file, toolKey) {
+      const tool = LIMITS[toolKey] || {};
+      // Global hard cap — never process
+      if (file.size > LIMITS.global.hardBytes) {
+        return {
+          ok: false,
+          reason: 'File is ' + formatBytes(file.size) + '. Maximum supported size is ' +
+                  formatBytes(LIMITS.global.hardBytes) + '.',
+          recommendation: 'Use a smaller file or split it before uploading.'
+        };
+      }
+      // Per-tool cap
+      if (tool.hardBytes && file.size > tool.hardBytes) {
+        return {
+          ok: true,
+          partial: true,
+          reason: 'File is ' + formatBytes(file.size) + ', above the ' +
+                  formatBytes(tool.hardBytes) + ' recommended size for this tool.'
+        };
+      }
+      // Soft global cap → warn but don't block
+      if (file.size > LIMITS.global.softBytes) {
+        return {
+          ok: true,
+          partial: true,
+          reason: 'File is over ' + formatBytes(LIMITS.global.softBytes) + ' — processing may be slow.'
+        };
+      }
+      return { ok: true, partial: false };
+    }
+
+    // Show a 3-button modal asking the user how to proceed when a file is over limits.
+    // Resolves with one of: 'partial' | 'full' | 'cancel'.
+    function askPartialProcessing(toolName, file, reason) {
+      return new Promise(function (resolve) {
+        const overlay = byId('modalOverlay');
+        const eyebrowEl = byId('modalEyebrow');
+        const titleEl = byId('modalTitle');
+        const bodyEl = byId('modalBody');
+        if (!overlay || !titleEl || !bodyEl) { resolve('cancel'); return; }
+
+        if (eyebrowEl) eyebrowEl.textContent = 'Large file';
+        titleEl.innerHTML = 'How should we handle <em>' + escapeHtml(file.name) + '</em>?';
+        bodyEl.innerHTML =
+          '<p>' + escapeHtml(reason) + '</p>' +
+          '<p style="color:var(--ink-3);font-size:.86rem;margin-top:8px">' +
+            '<b>Partial</b> processes only the first portion (recommended for large files). ' +
+            '<b>Full</b> processes everything but may freeze your browser briefly.' +
+          '</p>' +
+          '<div class="modal-cta" style="flex-direction:row;flex-wrap:wrap">' +
+            '<button class="btn btn-accent" data-choice="partial">Process partially</button>' +
+            '<button class="btn btn-ghost" data-choice="full">Continue anyway</button>' +
+            '<button class="btn btn-ghost" data-choice="cancel">Cancel</button>' +
+          '</div>';
+        overlay.classList.add('show');
+        overlay.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('modal-open');
+
+        const handler = function (e) {
+          const btn = e.target && e.target.closest && e.target.closest('[data-choice]');
+          if (!btn) return;
+          bodyEl.removeEventListener('click', handler);
+          overlay.classList.remove('show');
+          overlay.setAttribute('aria-hidden', 'true');
+          document.body.classList.remove('modal-open');
+          resolve(btn.dataset.choice);
+        };
+        bodyEl.addEventListener('click', handler);
+      });
+    }
+
+    // Yield to the event loop — keeps the UI responsive during long jobs.
+    function yieldNow() {
+      return new Promise(function (r) { setTimeout(r, 0); });
+    }
+
+    // Show a loading state inside the modal.
+    function showProcessingModal(toolName, status) {
+      const overlay = byId('modalOverlay');
+      const eyebrowEl = byId('modalEyebrow');
+      const titleEl = byId('modalTitle');
+      const bodyEl = byId('modalBody');
+      if (!overlay) return;
+      if (eyebrowEl) eyebrowEl.textContent = toolName;
+      if (titleEl) titleEl.innerHTML = 'Processing…';
+      if (bodyEl) bodyEl.innerHTML =
+        '<div style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px 0">' +
+          '<div class="ai-spinner" style="display:block;width:38px;height:38px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:aispin 0.7s linear infinite"></div>' +
+          '<p id="processingStatus" style="color:var(--ink-2);font-size:.92rem">' + escapeHtml(status || 'Working…') + '</p>' +
+        '</div>';
+      overlay.classList.add('show');
+      overlay.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('modal-open');
+    }
+
+    function updateProcessingStatus(status) {
+      const el = byId('processingStatus');
+      if (el) el.textContent = status;
+    }
+
+    // ─── Global state ────────────────────────────
+    // Single source of truth for the app. UI re-renders on state changes.
+    const STATE_KEY = 'resumeflow:v1';
+
+    const state = {
+      auth: { loggedIn: false, email: null, since: null },
+      hasResume: false,
+      parsed: null,             // last parsed resume data
+      uploadedFile: null,       // { name, size, when }
+      atsScore: null,           // { score, matched, missed, verdict, foundKeywords, missingKeywords }
+      coverGenerated: false,
+      activity: [],             // [{ kind, label, when }]
+      filesUploaded: []         // [{ name, size, when, kind }]
+    };
+
+    function isLoggedIn() { return !!state.auth.loggedIn; }
+
+    // Persistence is GATED by login. Logged-out users never write to localStorage.
+    function persist() {
+      if (!isLoggedIn()) return;
+      try {
+        const snapshot = {
+          auth: state.auth,
+          hasResume: state.hasResume,
+          parsed: state.parsed,
+          uploadedFile: state.uploadedFile,
+          atsScore: state.atsScore,
+          coverGenerated: state.coverGenerated,
+          activity: state.activity.slice(-25),
+          filesUploaded: state.filesUploaded.slice(-25)
+        };
+        localStorage.setItem(STATE_KEY, JSON.stringify(snapshot));
+      } catch (e) { /* quota / disabled — fine */ }
+    }
+
+    function restore() {
+      // Only restore if a logged-in flag is in sessionStorage.
+      // sessionStorage is wiped on browser close, so refreshing within the
+      // same session keeps you logged in, but closing the tab signs you out.
+      let session;
+      try { session = sessionStorage.getItem(STATE_KEY + ':session'); } catch (e) {}
+      if (!session) return;
+      try {
+        const raw = localStorage.getItem(STATE_KEY);
+        if (!raw) return;
+        const snap = JSON.parse(raw);
+        Object.assign(state, snap);
+      } catch (e) { /* corrupt — ignore */ }
+    }
+
+    function clearAllData() {
+      try { localStorage.removeItem(STATE_KEY); } catch (e) {}
+      try { sessionStorage.removeItem(STATE_KEY + ':session'); } catch (e) {}
+      state.auth = { loggedIn: false, email: null, since: null };
+      state.hasResume = false;
+      state.parsed = null;
+      state.uploadedFile = null;
+      state.atsScore = null;
+      state.coverGenerated = false;
+      state.activity = [];
+      state.filesUploaded = [];
+    }
+
+    // ─── Activity tracking ───────────────────────
+    function addActivity(kind, label) {
+      state.activity.unshift({ kind: kind, label: label, when: Date.now() });
+      if (state.activity.length > 25) state.activity.length = 25;
+      persist();
+    }
+
+    function timeAgo(ts) {
+      const s = Math.floor((Date.now() - ts) / 1000);
+      if (s < 60) return 'just now';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + 'h ago';
+      const d = Math.floor(h / 24);
+      return d + 'd ago';
+    }
+
+    // ─── Auth state renderer (header CTA + dashboard greeting) ───
+    function renderAuthState() {
+      const loginLink = $('.nav-cta a.btn-link[href="#auth"]');
+      const signupBtn = $('.nav-cta a.btn-primary[href="#auth?signup"]');
+      if (state.auth.loggedIn) {
+        if (loginLink) loginLink.textContent = 'Dashboard';
+        if (loginLink) loginLink.setAttribute('href', '#dashboard');
+        if (signupBtn) {
+          signupBtn.textContent = 'Sign out';
+          signupBtn.setAttribute('href', '#');
+          signupBtn.setAttribute('data-action', 'signout');
+          signupBtn.removeAttribute('data-link');
+        }
+      } else {
+        if (loginLink) {
+          loginLink.textContent = 'Log in';
+          loginLink.setAttribute('href', '#auth');
+        }
+        if (signupBtn) {
+          signupBtn.textContent = 'Start Free';
+          signupBtn.setAttribute('href', '#auth?signup');
+          signupBtn.setAttribute('data-link', '');
+          signupBtn.removeAttribute('data-action');
+        }
+      }
+    }
+
+    // Header sign-out shortcut
+    on(document, 'click', function (e) {
+      const t = e.target && e.target.closest && e.target.closest('[data-action="signout"]');
+      if (!t) return;
+      e.preventDefault();
+      try { sessionStorage.removeItem(STATE_KEY + ':session'); } catch (err) {}
+      state.auth = { loggedIn: false, email: null, since: null };
+      showToast('Signed out');
+      renderAuthState();
+      renderDashboard();
+      location.hash = '#home';
+    });
+
+    // ─── Dashboard renderer ──────────────────────
+    function renderDashboard() {
+      const empty = byId('dashEmpty');
+      const content = byId('dashContent');
+      const greeting = byId('dashGreeting');
+      const sub = byId('dashSub');
+
+      if (!empty || !content) return;
+
+      if (!state.hasResume) {
+        empty.removeAttribute('hidden');
+        content.setAttribute('hidden', '');
+        if (greeting) {
+          greeting.innerHTML = state.auth.loggedIn
+            ? 'Welcome back, <em>' + escapeHtml((state.auth.email || '').split('@')[0]) + '.</em>'
+            : 'Welcome to <em>ResumeFlow.</em>';
+        }
+        if (sub) {
+          sub.textContent = state.auth.loggedIn
+            ? 'No resume created yet. Get started below.'
+            : 'Sign in to save your work, or jump in as a guest.';
+        }
+        return;
+      }
+
+      empty.setAttribute('hidden', '');
+      content.removeAttribute('hidden');
+
+      const name = (state.parsed && state.parsed.name) || (state.auth.email && state.auth.email.split('@')[0]) || 'there';
+      const firstName = name.split(' ')[0] || 'there';
+      const initials = name.split(' ').map(function (w) { return w[0]; }).join('').slice(0, 2).toUpperCase() || '?';
+
+      if (greeting) greeting.innerHTML = 'Welcome back, <em>' + escapeHtml(firstName) + '.</em>';
+      if (sub) sub.textContent = "Here's what's in flight.";
+      setText(byId('dashAvatar'), initials);
+      setText(byId('dashName'), name);
+      setText(byId('dashPlan'), state.auth.loggedIn ? 'Pro plan' : 'Guest session');
+
+      // Stats
+      const resumeCount = state.parsed ? 1 : 0;
+      const coverCount = state.coverGenerated ? 1 : 0;
+      setText(byId('statResumes'), String(resumeCount));
+      setText(byId('statResumesDelta'), state.uploadedFile ? timeAgo(state.uploadedFile.when) : '—');
+      setText(byId('statCovers'), String(coverCount));
+      setText(byId('statCoversDelta'), coverCount ? 'just generated' : '—');
+      setText(byId('statAts'), state.atsScore && !state.atsScore.error ? String(state.atsScore.score) : '—');
+      setText(byId('statAtsDelta'), state.atsScore && !state.atsScore.error ? state.atsScore.verdict.replace(/\.$/, '') : 'Run an ATS check');
+
+      // Recent activity (overview tab)
+      const recents = byId('recentDocsList');
+      if (recents) {
+        if (state.activity.length === 0) {
+          recents.innerHTML = '<div class="dash-empty-inline">No activity yet.</div>';
+        } else {
+          recents.innerHTML = state.activity.slice(0, 5).map(function (a) {
+            return '<div class="doc-item">' +
+              '<div class="doc-thumb"></div>' +
+              '<div class="doc-info"><b>' + escapeHtml(a.label) + '</b><small>' + escapeHtml(a.kind) + ' · ' + timeAgo(a.when) + '</small></div>' +
+              '<div class="doc-actions"></div>' +
+            '</div>';
+          }).join('');
+        }
+      }
+
+      // Resumes panel
+      const resumesList = byId('resumesList');
+      if (resumesList) {
+        if (state.parsed) {
+          resumesList.innerHTML =
+            '<div class="doc-item">' +
+              '<div class="doc-thumb"></div>' +
+              '<div class="doc-info"><b>' + escapeHtml(state.parsed.name || 'Untitled resume') + (state.parsed.title ? ' — ' + escapeHtml(state.parsed.title) : '') + '</b>' +
+              '<small>' + (state.uploadedFile ? escapeHtml(state.uploadedFile.name) + ' · ' : '') +
+              (state.atsScore && !state.atsScore.error ? 'ATS ' + state.atsScore.score + ' · ' : '') +
+              (state.uploadedFile ? timeAgo(state.uploadedFile.when) : 'Just now') + '</small></div>' +
+              '<div class="doc-actions">' +
+                '<button title="Edit"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2l3 3-7 7H2v-3l7-7z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></button>' +
+                '<button title="Download"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v8m0 0L4 7m3 3l3-3M2 12h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
+              '</div>' +
+            '</div>';
+        } else {
+          resumesList.innerHTML = '<div class="dash-empty-inline">No resumes yet.</div>';
+        }
+      }
+
+      // Cover letters panel
+      const coversList = byId('coversList');
+      if (coversList) {
+        if (state.coverGenerated) {
+          coversList.innerHTML =
+            '<div class="doc-item">' +
+              '<div class="doc-thumb"></div>' +
+              '<div class="doc-info"><b>Cover letter</b><small>Just generated</small></div>' +
+              '<div class="doc-actions">' +
+                '<button title="Edit"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2l3 3-7 7H2v-3l7-7z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></button>' +
+              '</div>' +
+            '</div>';
+        } else {
+          coversList.innerHTML = '<div class="dash-empty-inline">No cover letters yet.</div>';
+        }
+      }
+
+      // Files panel
+      const filesList = byId('filesList');
+      if (filesList) {
+        if (state.filesUploaded.length === 0 && !state.uploadedFile) {
+          filesList.innerHTML = '<div class="dash-empty-inline">No files uploaded yet.</div>';
+        } else {
+          const all = state.uploadedFile ? [state.uploadedFile].concat(state.filesUploaded) : state.filesUploaded.slice();
+          filesList.innerHTML = all.slice(0, 8).map(function (f) {
+            return '<div class="doc-item">' +
+              '<div class="doc-thumb"></div>' +
+              '<div class="doc-info"><b>' + escapeHtml(f.name) + '</b><small>' + formatBytes(f.size) + ' · ' + timeAgo(f.when) + '</small></div>' +
+              '<div class="doc-actions"></div>' +
+            '</div>';
+          }).join('');
+        }
+      }
+
+      // Account panel
+      setText(byId('acctEmail'), state.auth.email || 'Guest session');
+      setText(byId('acctSince'), state.auth.since ? new Date(state.auth.since).toLocaleDateString() : 'this session');
+    }
+
+    // Render initial state on boot
+    renderAuthState();
+    renderDashboard();
+
     // ─── Toast ───────────────────────────────────
     const toast = byId('toast');
     const toastMsg = byId('toastMsg');
@@ -85,6 +449,31 @@
 
       if (page === 'auth') setAuthMode(query === 'signup' ? 'signup' : 'login');
 
+      // Resume page sub-actions: ?action=rewrite, ?action=jd-match
+      if (page === 'resume' && query) {
+        const m = query.match(/action=([\w-]+)/);
+        if (m) {
+          const action = m[1];
+          // Defer until DOM activation completes
+          setTimeout(function () {
+            if (action === 'rewrite') {
+              const rewriteBtn = $('[data-action="rewrite"]');
+              if (rewriteBtn) {
+                rewriteBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                showToast('Click "Rewrite Bullets" to upgrade your work history');
+              }
+            } else if (action === 'jd-match') {
+              const jdEl = byId('jdInput');
+              if (jdEl) {
+                jdEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                jdEl.focus();
+                showToast('Paste the job description below to see your match score');
+              }
+            }
+          }, 200);
+        }
+      }
+
       try { window.scrollTo({ top: 0, behavior: 'instant' }); }
       catch (e) { window.scrollTo(0, 0); }
     }
@@ -136,13 +525,21 @@
     let parsedResume = null; // last parsed result, available app-wide
 
     // ─── Text extraction from PDF / DOCX / TXT ───
-    async function extractTextFromFile(file) {
-      if (file.size > 12 * 1024 * 1024) {
-        throw new Error('File too large (max 12 MB)');
+    // Supports a `maxPages` option for partial PDF processing and an
+    // `onProgress` callback so callers can update the loading UI.
+    async function extractTextFromFile(file, opts) {
+      opts = opts || {};
+      const onProgress = opts.onProgress || function () {};
+
+      // Hard ceiling — never even try
+      if (file.size > LIMITS.global.hardBytes) {
+        throw new Error('File is over ' + formatBytes(LIMITS.global.hardBytes) + ' (the absolute maximum).');
       }
+
       const ext = (file.name.split('.').pop() || '').toLowerCase();
 
       if (ext === 'txt') {
+        onProgress('Reading text…');
         return await file.text();
       }
       if (ext === 'pdf') {
@@ -152,11 +549,16 @@
         try {
           window.pdfjsLib.GlobalWorkerOptions.workerSrc =
             'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        } catch (e) { /* ignore — already set */ }
+        } catch (e) { /* ignore */ }
+
+        onProgress('Loading PDF…');
         const buffer = await file.arrayBuffer();
         const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+        const totalPages = pdf.numPages;
+        const limit = opts.maxPages ? Math.min(opts.maxPages, totalPages) : totalPages;
         let out = '';
-        for (let i = 1; i <= pdf.numPages; i++) {
+        for (let i = 1; i <= limit; i++) {
+          onProgress('Reading page ' + i + ' of ' + limit + (totalPages > limit ? ' (' + totalPages + ' total)' : ''));
           const page = await pdf.getPage(i);
           const content = await page.getTextContent();
           let lastY = null;
@@ -167,6 +569,8 @@
             lastY = y;
           }
           out += '\n\n';
+          // Yield every couple of pages so the UI can repaint
+          if (i % 2 === 0) await yieldNow();
         }
         return out;
       }
@@ -174,15 +578,27 @@
         if (typeof window.mammoth === 'undefined') {
           throw new Error('DOCX library is still loading — please retry in a moment');
         }
+        onProgress('Reading DOCX…');
         const buffer = await file.arrayBuffer();
         const result = await window.mammoth.extractRawText({ arrayBuffer: buffer });
         return result.value || '';
       }
       if (ext === 'doc') {
-        // Old .doc format — try as text; extraction will be partial
         return await file.text();
       }
       throw new Error('Unsupported file type: .' + ext);
+    }
+
+    // Get just the page count of a PDF (cheap — no text extraction)
+    async function getPdfPageCount(file) {
+      try {
+        if (typeof window.pdfjsLib === 'undefined') return null;
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        const buffer = await file.arrayBuffer();
+        const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+        return pdf.numPages;
+      } catch (e) { return null; }
     }
 
     // ─── Heuristic resume parser ────────────────
@@ -449,11 +865,42 @@
         if (exp.bullets.length) setField('bullets1', exp.bullets.join('\n'));
       }
 
+      // Take preview out of empty state and rebuild its layout
+      const preview = byId('resumePreview');
+      if (preview && preview.dataset.empty === '1') {
+        preview.dataset.empty = '0';
+        preview.innerHTML =
+          '<h2 id="rp-name">—</h2>' +
+          '<div class="role-line" id="rp-title"></div>' +
+          '<div class="meta">' +
+            '<span id="rp-email"></span>' +
+            '<span id="rp-phone"></span>' +
+            '<span id="rp-location"></span>' +
+          '</div>' +
+          '<h3>Summary</h3><p id="rp-summary"></p>' +
+          '<h3>Experience</h3>' +
+          '<div class="item">' +
+            '<div class="item-head"><b id="rp-role1"></b><time id="rp-dates1"></time></div>' +
+            '<div class="org" id="rp-company1"></div>' +
+            '<ul id="rp-bullets1"></ul>' +
+          '</div>' +
+          '<h3>Skills</h3><div class="skills" id="rp-skills"></div>' +
+          '<h3>Education</h3><p id="rp-education"></p>';
+      }
+
+      // Update state — this is the resume content
+      state.hasResume = true;
+      state.parsed = parsed;
+      persist();
+
       // Trigger live preview via the form's input listener
       form.dispatchEvent(new Event('input', { bubbles: true }));
 
       // If there are additional experiences, render them in the preview below role1
       renderAdditionalExperiences(parsed);
+
+      // Update dependent UI
+      renderDashboard();
     }
 
     function renderAdditionalExperiences(parsed) {
@@ -497,6 +944,7 @@
 
       const out = byId('coverOutput');
       if (!out) return;
+      out.dataset.empty = '0';
 
       const name = parsed.name || 'Candidate';
       const firstName = (name.split(' ')[0] || 'Candidate').trim();
@@ -578,9 +1026,11 @@
 
     // ─── REAL FILE UPLOAD: tools zone ────────────
     let toolsActiveTool = null;
+    let toolsCurrentFile = null;
     function applyToolsFile(file) {
       const zone = byId('toolsUpload');
       if (!zone) return;
+      toolsCurrentFile = file;
       const toolLabel = toolsActiveTool ? (' for ' + toolsActiveTool) : '';
       zone.innerHTML =
         '<svg width="40" height="40" viewBox="0 0 40 40" fill="none">' +
@@ -594,7 +1044,117 @@
         '<button class="btn btn-accent" type="button" data-action="replace-tools">Choose another file</button>' +
         '<div class="formats">Uploaded ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</div>';
       zone.classList.remove('dragover');
+
+      // Reveal the action menu with the filename
+      const actions = byId('toolsActions');
+      const fileLabel = byId('toolsActionsFile');
+      if (actions) actions.classList.add('show');
+      if (fileLabel) fileLabel.textContent = file.name;
+
+      // Track in state
+      state.filesUploaded.unshift({ name: file.name, size: file.size, when: Date.now(), kind: (file.name.split('.').pop() || '').toLowerCase() });
+      if (state.filesUploaded.length > 25) state.filesUploaded.length = 25;
+      addActivity('upload', 'Uploaded ' + file.name);
+      persist();
+      renderDashboard();
+
+      // Scroll to actions
+      setTimeout(function () {
+        if (actions) actions.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 200);
     }
+
+    // AI Tools action buttons — process the uploaded file
+    on(byId('toolsActions'), 'click', async function (e) {
+      const btn = e.target && e.target.closest && e.target.closest('[data-tools-action]');
+      if (!btn) return;
+      e.preventDefault();
+      if (!toolsCurrentFile) {
+        showToast('Upload a file first');
+        return;
+      }
+      const action = btn.dataset.toolsAction;
+
+      if (action === 'generate-resume') {
+        // Run the same parser pipeline as the resume page upload
+        showToast('Parsing resume…');
+        try {
+          const text = await extractTextFromFile(toolsCurrentFile);
+          if (!text || text.trim().length < 30) throw new Error('No readable text in this file.');
+          const parsed = parseResume(text);
+          if (!parsed.name && !parsed.email && parsed.experiences.length === 0) {
+            throw new Error('No structured content detected.');
+          }
+          applyParsedToForm(parsed);
+          showToast('Resume generated. Switching to builder…');
+          setTimeout(function () { location.hash = '#resume'; }, 700);
+        } catch (err) {
+          console.error(err);
+          showToast('Could not generate resume: ' + err.message);
+        }
+      }
+      else if (action === 'generate-cover') {
+        showToast('Drafting cover letter…');
+        try {
+          const text = await extractTextFromFile(toolsCurrentFile);
+          if (!text || text.trim().length < 30) throw new Error('No readable text in this file.');
+          const parsed = parseResume(text);
+          applyParsedToCoverLetter(parsed);
+          state.coverGenerated = true;
+          state.parsed = state.parsed || parsed;
+          state.hasResume = true;
+          persist();
+          renderDashboard();
+          showToast('Cover letter ready. Switching…');
+          setTimeout(function () { location.hash = '#cover'; }, 700);
+        } catch (err) {
+          console.error(err);
+          showToast('Could not generate cover letter: ' + err.message);
+        }
+      }
+      else if (action === 'analyze') {
+        showToast('Analyzing…');
+        try {
+          const text = await extractTextFromFile(toolsCurrentFile);
+          if (!text || text.trim().length < 30) throw new Error('No readable text in this file.');
+          const parsed = parseResume(text);
+          applyParsedToForm(parsed);
+          // Move to resume page so the user can paste a JD
+          setTimeout(function () {
+            location.hash = '#resume';
+            setTimeout(function () {
+              const jd = byId('jdInput');
+              if (jd) jd.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              showToast('Paste a job description and click "Check ATS Score"');
+            }, 400);
+          }, 400);
+        } catch (err) {
+          console.error(err);
+          showToast('Could not analyze: ' + err.message);
+        }
+      }
+      else if (action === 'improve') {
+        showToast('Improving…');
+        try {
+          const text = await extractTextFromFile(toolsCurrentFile);
+          if (!text || text.trim().length < 30) throw new Error('No readable text in this file.');
+          const parsed = parseResume(text);
+          applyParsedToForm(parsed);
+          // Trigger the rewriter on the first experience
+          setTimeout(function () {
+            location.hash = '#resume';
+            setTimeout(function () {
+              const rewriteBtn = $('[data-action="rewrite"]');
+              if (rewriteBtn) rewriteBtn.click();
+              showToast('Bullets rewritten with stronger phrasing');
+            }, 500);
+          }, 400);
+        } catch (err) {
+          console.error(err);
+          showToast('Could not improve: ' + err.message);
+        }
+      }
+    });
 
     on(byId('toolsUpload'), 'click', function () {
       pickFile(applyToolsFile, '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png');
@@ -688,12 +1248,39 @@
 
     // Generic pipeline runner — shares all logic, swaps the renderers.
     async function runResumePipeline(file, renderers) {
+      // Enforce file limits up front
+      const check = checkFileLimits(file, 'parsing');
+      if (!check.ok) {
+        renderers.error(file, check.reason);
+        showToast(check.reason);
+        return;
+      }
+      let processingMode = 'full';
+      if (check.partial) {
+        const choice = await askPartialProcessing('Resume parser', file, check.reason);
+        if (choice === 'cancel') { renderers.error(file, 'Cancelled'); return; }
+        processingMode = choice;
+      }
+
       renderers.analyzing(file);
       try {
-        const text = await extractTextFromFile(file);
+        const opts = {};
+        if (processingMode === 'partial' && /\.pdf$/i.test(file.name)) {
+          opts.maxPages = LIMITS.pdf.softPages;
+        }
+        let text = await extractTextFromFile(file, opts);
         if (!text || text.trim().length < 30) {
           throw new Error('Could not read enough text — the file may be a scanned image.');
         }
+
+        // Enforce character cap on the parsing input
+        let textWasTrimmed = false;
+        if (text.length > LIMITS.parsing.hardChars) {
+          text = text.slice(0, LIMITS.parsing.hardChars);
+          textWasTrimmed = true;
+          showToast('Content shortened for processing — first ' + LIMITS.parsing.hardChars.toLocaleString() + ' characters used.');
+        }
+
         const parsed = parseResume(text);
         const hasContent = parsed.name || parsed.email || (parsed.experiences && parsed.experiences.length);
         if (!hasContent) {
@@ -710,7 +1297,8 @@
         applyParsedToForm(parsed);
         applyParsedToCoverLetter(parsed);
         renderers.success(file, parsed);
-        showToast('Resume successfully generated · auto-filled');
+        const banner = (processingMode === 'partial' || textWasTrimmed) ? ' (partial)' : '';
+        showToast('Resume successfully generated · auto-filled' + banner);
       } catch (err) {
         console.error(err);
         renderers.error(file, err.message);
@@ -781,25 +1369,77 @@
     }
 
     // ─── REAL PDF DOWNLOAD via html2pdf.js ───────
-    function downloadAsPdf(elementId, filename) {
+    // Robust: waits for fonts to load, skips empty content, uses a clone
+    // attached to a known-rendered container so html2canvas captures it cleanly.
+    async function downloadAsPdf(elementId, filename) {
       const el = byId(elementId);
       if (!el) { showToast('Nothing to export yet'); return; }
       if (typeof window.html2pdf === 'undefined') {
         showToast('PDF library still loading — try again in a moment');
         return;
       }
+
+      // Don't export an empty placeholder. If the preview is in its empty
+      // state (data-empty="1") OR has very little visible text, bail out.
+      const isEmpty = el.dataset.empty === '1';
+      const text = (el.innerText || '').trim();
+      if (isEmpty || text.length < 30) {
+        showToast('Add some content first — your preview is empty');
+        return;
+      }
+
       showToast('Generating PDF…');
-      const opts = {
-        margin: [10, 12, 10, 12],
-        filename: filename || 'document.pdf',
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
-        jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' },
-        pagebreak: { mode: ['css', 'legacy'] }
-      };
-      window.html2pdf().set(opts).from(el).save()
-        .then(function () { showToast('Saved ' + opts.filename); })
-        .catch(function (err) { console.error(err); showToast('PDF export failed'); });
+
+      try {
+        // Wait for web fonts so the rasterizer doesn't capture fallback text.
+        if (document.fonts && document.fonts.ready) {
+          await document.fonts.ready;
+        }
+        // One more frame for layout to settle
+        await new Promise(function (r) { requestAnimationFrame(function () { setTimeout(r, 50); }); });
+
+        // Clone the element into a hidden but rendered offscreen container so
+        // html2canvas always sees a paint-clean target — even if the source is
+        // currently inside a transformed/animated parent.
+        const clone = el.cloneNode(true);
+        clone.id = elementId + '-clone';
+        clone.style.position = 'fixed';
+        clone.style.top = '0';
+        clone.style.left = '-99999px';
+        clone.style.width = (el.offsetWidth || 720) + 'px';
+        clone.style.background = '#ffffff';
+        clone.style.boxShadow = 'none';
+        clone.style.transform = 'none';
+        document.body.appendChild(clone);
+
+        const opts = {
+          margin: [12, 14, 12, 14],
+          filename: filename || 'document.pdf',
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            windowWidth: clone.offsetWidth,
+            windowHeight: clone.offsetHeight
+          },
+          jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait', compress: true },
+          pagebreak: { mode: ['css', 'legacy'] }
+        };
+
+        await window.html2pdf().set(opts).from(clone).save();
+        showToast('Saved ' + opts.filename);
+        // Mark this in activity if we're tracking it
+        addActivity('download', opts.filename);
+      } catch (err) {
+        console.error('PDF generation failed:', err);
+        showToast('PDF export failed: ' + (err.message || 'unknown error'));
+      } finally {
+        const stale = byId(elementId + '-clone');
+        if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+      }
     }
 
     // ─── REAL DOCX DOWNLOAD via Word-compatible HTML Blob ───
@@ -928,38 +1568,256 @@
       });
     });
 
-    // ─── ATS Score animation ─────────────────────
-    const checkAtsBtn = byId('checkAts');
-    on(checkAtsBtn, 'click', function () {
+    // ─── ATS Score (real calculation) ────────────
+    // Tokenize the JD and resume content, find shared meaningful keywords,
+    // calculate a real match score, and surface the missing keywords.
+    const STOPWORDS = new Set([
+      'a','an','the','and','or','but','if','of','to','in','on','at','for','with','by','from','as','is','are','was','were','be','been','being','have','has','had','do','does','did','will','would','could','should','can','may','might','must','shall','this','that','these','those','i','you','he','she','it','we','they','them','their','our','your','my','me','us','about','into','through','during','before','after','above','below','between','out','off','over','under','up','down','no','not','also','very','just','than','then','there','here','where','when','what','which','who','whom','how','why','all','any','some','more','most','other','such','only','own','same','so','too','very','one','two','three','first','second','etc','please','thank','thanks','well','look','looking','looks','seek','seeking','plus','strong','great','good','best','better','new','top','high','low','hire','hires','hiring','candidate','candidates','position','positions','role','roles','job','jobs','work','works','working','team','teams','company','companies','experience','experiences','years','year','months','month','required','required','preferred','responsible','responsibilities','requirements','qualifications','salary','benefits','compensation','equal','opportunity','employer','employers','employees','employee','hours','time','full','part','remote','onsite','hybrid'
+    ]);
+
+    function tokenize(text) {
+      return (text || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9+#/\- ]+/g, ' ')
+        .split(/\s+/)
+        .filter(function (w) { return w && w.length >= 3 && !STOPWORDS.has(w); });
+    }
+
+    // Extract meaningful single-word keywords from a JD. Single words match
+    // cleanly via set lookup against the resume — which is what most ATS
+    // systems actually do, and avoids the noise of speculative n-grams.
+    function extractKeywords(jd) {
+      const tokens = tokenize(jd);
+      if (tokens.length === 0) return [];
+
+      const freq = new Map();
+      for (const t of tokens) {
+        // Keep substantial words (4+ chars) or technical-looking shorter ones (c++, c#, ai, ml, sql, etc — at least 3 chars and one tech char)
+        const isTechShort = t.length >= 3 && /[+#/]/.test(t);
+        if (t.length < 4 && !isTechShort) continue;
+        freq.set(t, (freq.get(t) || 0) + 1);
+      }
+
+      const arr = [];
+      for (const [phrase, count] of freq.entries()) {
+        arr.push({ phrase: phrase, count: count, weight: count });
+      }
+      // Sort by frequency desc — most-mentioned words first
+      arr.sort(function (a, b) { return b.weight - a.weight; });
+      return arr.slice(0, 25);
+    }
+
+    function calculateAtsScore(jdText, resumeText) {
+      if (!jdText || jdText.trim().length < 20) {
+        return { error: 'Add a job description to compare against.' };
+      }
+      if (!resumeText || resumeText.trim().length < 30) {
+        return { error: 'No resume data — upload a resume or fill in the form first.' };
+      }
+
+      const keywords = extractKeywords(jdText);
+      if (keywords.length === 0) {
+        return { error: 'Could not extract keywords from the job description.' };
+      }
+
+      // Build a set of resume tokens for fast lookup
+      const resumeTokens = new Set(tokenize(resumeText));
+
+      const found = [];
+      const missing = [];
+      for (const kw of keywords) {
+        if (resumeTokens.has(kw.phrase)) found.push(kw);
+        else missing.push(kw);
+      }
+
+      const totalWeight = keywords.reduce(function (a, k) { return a + k.weight; }, 0);
+      const foundWeight = found.reduce(function (a, k) { return a + k.weight; }, 0);
+      const score = totalWeight === 0 ? 0 : Math.round((foundWeight / totalWeight) * 100);
+
+      let verdict;
+      if (score >= 90) verdict = 'Excellent match.';
+      else if (score >= 75) verdict = 'Strong match.';
+      else if (score >= 60) verdict = 'Good match.';
+      else if (score >= 45) verdict = 'Partial match — add more relevant keywords.';
+      else verdict = 'Weak match — your resume needs significant tailoring for this role.';
+
+      return {
+        score: score,
+        matched: found.length,
+        total: keywords.length,
+        verdict: verdict,
+        foundKeywords: found.slice(0, 8).map(function (k) { return k.phrase; }),
+        missingKeywords: missing.slice(0, 8).map(function (k) { return k.phrase; })
+      };
+    }
+
+    function getResumeText() {
+      // Combine all form values + the live preview text.
+      const form = byId('resumeForm');
+      const parts = [];
+      if (form) {
+        $$('input,textarea', form).forEach(function (el) {
+          if (el.value) parts.push(el.value);
+        });
+      }
+      const preview = byId('resumePreview');
+      if (preview && preview.dataset.empty !== '1') {
+        parts.push(preview.innerText || '');
+      }
+      // Add parsed data if we have it (in case form fields haven't been refilled)
+      if (state.parsed) {
+        parts.push([
+          state.parsed.name, state.parsed.title, state.parsed.summary,
+          (state.parsed.skills || []).join(' '),
+          (state.parsed.experiences || []).map(function (e) {
+            return [e.role, e.company, (e.bullets || []).join(' ')].filter(Boolean).join(' ');
+          }).join(' '),
+          (state.parsed.educations || []).join(' ')
+        ].filter(Boolean).join(' '));
+      }
+      return parts.join(' \n ');
+    }
+
+    function renderAtsResult(result) {
       const ring = byId('scoreRing');
       const val = byId('scoreValue');
       const verdict = byId('scoreVerdict');
       const matched = byId('kwMatched');
       const missed = byId('kwMissed');
-      if (!ring || !val) return;
+      const kwList = byId('kwList');
+      const sugg = byId('suggestions');
 
-      checkAtsBtn.disabled = true;
-      checkAtsBtn.innerHTML = 'Analyzing…';
-      if (verdict) verdict.textContent = 'Analyzing keywords and bullet structure…';
+      if (result.error) {
+        if (ring) ring.style.setProperty('--p', 0);
+        if (val) val.innerHTML = '—<small></small>';
+        if (verdict) verdict.textContent = result.error;
+        setText(matched, '—');
+        setText(missed, '—');
+        if (kwList) {
+          kwList.dataset.empty = '1';
+          kwList.innerHTML = '<div class="kw-empty">' + escapeHtml(result.error) + '</div>';
+        }
+        if (sugg) {
+          sugg.dataset.empty = '1';
+          sugg.innerHTML = '<div class="sugg-empty" style="color:var(--ink-3);font-size:.86rem;font-style:italic;padding:12px 0">No data available.</div>';
+        }
+        return;
+      }
 
-      const target = 87;
+      // Animate score ring
+      const target = result.score;
       let cur = 0;
       const tick = setInterval(function () {
-        cur += 3;
-        if (cur >= target) { cur = target; clearInterval(tick); finish(); }
-        ring.style.setProperty('--p', cur);
-        val.innerHTML = cur + '<small>/100</small>';
+        cur += Math.max(1, Math.round(target / 30));
+        if (cur >= target) { cur = target; clearInterval(tick); }
+        if (ring) ring.style.setProperty('--p', cur);
+        if (val) val.innerHTML = cur + '<small>/100</small>';
       }, 22);
 
-      function finish() {
-        if (verdict) verdict.innerHTML = 'Strong match. <span>You\'re in the top 12% for this role.</span>';
-        setText(matched, '14');
-        setText(missed, '3');
-        checkAtsBtn.disabled = false;
-        checkAtsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1l1.5 4.5L13 7l-4.5 1.5L7 13l-1.5-4.5L1 7l4.5-1.5L7 1z" fill="currentColor"/></svg> Re-run check';
-        showToast('ATS score updated · 87/100');
+      if (verdict) {
+        const accentClass = result.score >= 75 ? 'span' : 'span';
+        verdict.innerHTML = escapeHtml(result.verdict) +
+          ' <span>' + result.matched + ' of ' + result.total + ' keywords matched.</span>';
       }
+      setText(matched, String(result.matched));
+      setText(missed, String(result.total - result.matched));
+
+      // Render keyword list
+      if (kwList) {
+        kwList.dataset.empty = '0';
+        const rows = [];
+        for (const kw of result.foundKeywords) {
+          rows.push(
+            '<div class="kw-row found">' +
+              '<span class="kw-ico"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' +
+              '<b>' + escapeHtml(kw) + '</b>' +
+              '<span class="kw-tag">Found</span>' +
+            '</div>'
+          );
+        }
+        for (const kw of result.missingKeywords) {
+          rows.push(
+            '<div class="kw-row missing">' +
+              '<span class="kw-ico"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>' +
+              '<b>' + escapeHtml(kw) + '</b>' +
+              '<span class="kw-tag">Missing</span>' +
+            '</div>'
+          );
+        }
+        kwList.innerHTML = rows.join('') || '<div class="kw-empty">No keywords found.</div>';
+      }
+
+      // Render concrete suggestions based on missing keywords
+      if (sugg) {
+        sugg.dataset.empty = '0';
+        if (result.missingKeywords.length === 0) {
+          sugg.innerHTML =
+            '<div class="suggestion">' +
+              '<div class="si"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
+              '<div><b>Looking strong</b><p>Your resume covers all the keywords we extracted from this job description.</p></div>' +
+            '</div>';
+        } else {
+          const items = result.missingKeywords.slice(0, 3).map(function (kw) {
+            return '<div class="suggestion">' +
+              '<div class="si"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>' +
+              '<div><b>Add: "' + escapeHtml(kw) + '"</b><p>This appears in the job description but not in your resume. Consider weaving it into a bullet or your skills list.</p></div>' +
+            '</div>';
+          });
+          sugg.innerHTML = items.join('');
+        }
+      }
+
+      state.atsScore = result;
+      persist();
+      addActivity('ats', 'Ran ATS check — score ' + result.score);
+      // Update dashboard stats if dashboard is being rendered
+      renderDashboard();
+    }
+
+    const checkAtsBtn = byId('checkAts');
+    on(checkAtsBtn, 'click', function () {
+      const jdEl = byId('jdInput');
+      const jd = jdEl ? jdEl.value : '';
+      const resumeText = getResumeText();
+
+      if (checkAtsBtn) {
+        checkAtsBtn.disabled = true;
+        checkAtsBtn.innerHTML = 'Analyzing…';
+      }
+      const verdict = byId('scoreVerdict');
+      if (verdict) verdict.textContent = 'Analyzing keywords and bullet structure…';
+
+      // Brief delay so users see the loading transition
+      setTimeout(function () {
+        const result = calculateAtsScore(jd, resumeText);
+        renderAtsResult(result);
+        if (checkAtsBtn) {
+          checkAtsBtn.disabled = false;
+          checkAtsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1l1.5 4.5L13 7l-4.5 1.5L7 13l-1.5-4.5L1 7l4.5-1.5L7 1z" fill="currentColor"/></svg> Re-run check';
+        }
+        if (result.error) {
+          showToast(result.error);
+        } else {
+          showToast('ATS score · ' + result.score + '/100');
+        }
+      }, 350);
     });
+
+    // Re-calculate ATS when resume content changes (debounced)
+    let atsRefreshTimer;
+    function scheduleAtsRefresh() {
+      clearTimeout(atsRefreshTimer);
+      atsRefreshTimer = setTimeout(function () {
+        // Only auto-recalc if a check has already been run
+        if (!state.atsScore || state.atsScore.error) return;
+        const jdEl = byId('jdInput');
+        const jd = jdEl ? jdEl.value : '';
+        const result = calculateAtsScore(jd, getResumeText());
+        renderAtsResult(result);
+      }, 600);
+    }
+    on(byId('resumeForm'), 'input', scheduleAtsRefresh);
+    on(byId('jdInput'), 'input', scheduleAtsRefresh);
 
     // ─── Cover letter generator ──────────────────
     const genCover = byId('generateCover');
@@ -1036,7 +1894,7 @@
       { cat: 'convert',  name: 'PDF → Word',           desc: 'Convert PDF documents to editable .docx.',          badge: '' },
       { cat: 'convert',  name: 'Word → PDF',           desc: 'Turn .docx files into pixel-perfect PDFs.',         badge: '' },
       { cat: 'ai',       name: 'PDF Summarizer',       desc: 'Get a one-page summary of any long document.',      badge: 'AI' },
-      { cat: 'ai',       name: 'File Translator',      desc: 'Translate documents into 30+ languages.',           badge: 'AI' },
+      { cat: 'ai',       name: 'Language Detector',    desc: 'Identify the language of any document and copy the text.', badge: 'AI' },
       { cat: 'edit',     name: 'Extract Text',         desc: 'Pull clean text out of any PDF or scan.',           badge: '' },
       { cat: 'ai',       name: 'AI Document Q&A',      desc: 'Chat with any uploaded file. Ask, get answers.',    badge: 'AI' },
       { cat: 'ai',       name: 'AI Grammar Checker',   desc: 'Spot mistakes and tighten your writing instantly.', badge: 'AI' },
@@ -1060,16 +1918,725 @@
       }).join('');
       $$('.tool', grid).forEach(function (el) {
         el.addEventListener('click', function () {
-          toolsActiveTool = el.dataset.tool || 'tool';
-          const zone = byId('toolsUpload');
-          if (zone) {
-            zone.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            zone.classList.add('dragover');
-            setTimeout(function () { zone.classList.remove('dragover'); }, 1200);
+          const toolName = el.dataset.tool || 'tool';
+          toolsActiveTool = toolName;
+          // If a file is already uploaded, run the tool on it directly.
+          // Otherwise, open the file picker.
+          if (toolsCurrentFile) {
+            runToolOnFile(toolName, toolsCurrentFile);
+          } else {
+            const zone = byId('toolsUpload');
+            if (zone) {
+              zone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              zone.classList.add('dragover');
+              setTimeout(function () { zone.classList.remove('dragover'); }, 1200);
+            }
+            pickFile(function (file) {
+              applyToolsFile(file);
+              // Auto-run the chosen tool after upload
+              setTimeout(function () { runToolOnFile(toolName, file); }, 400);
+            }, '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png');
           }
-          pickFile(applyToolsFile, '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png');
         });
       });
+    }
+
+    // ─── Result modal (for tool output) ──────────
+    function showResultModal(title, eyebrow, bodyHtml) {
+      const overlay = byId('modalOverlay');
+      const eyebrowEl = byId('modalEyebrow');
+      const titleEl = byId('modalTitle');
+      const bodyEl = byId('modalBody');
+      if (!overlay || !titleEl || !bodyEl) {
+        showToast(title);
+        return;
+      }
+      if (eyebrowEl) eyebrowEl.textContent = eyebrow || '';
+      titleEl.innerHTML = title;
+      bodyEl.innerHTML = bodyHtml;
+      overlay.classList.add('show');
+      overlay.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('modal-open');
+    }
+
+    // Build a downloadable text blob from arbitrary content
+    function downloadTextFile(filename, content, mime) {
+      try {
+        const blob = new Blob([content], { type: mime || 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+        addActivity('download', filename);
+        return true;
+      } catch (err) {
+        console.error(err);
+        showToast('Download failed');
+        return false;
+      }
+    }
+
+    // ─── Run a specific tool on the uploaded file ─
+    // Map each tool to its limits key
+    const TOOL_LIMIT_KEY = {
+      'PDF Editor': 'pdf',
+      'Extract Text': 'pdf',
+      'PDF → Word': 'pdf',
+      'Word → PDF': 'pdf',
+      'PDF Compressor': 'compressor',
+      'PDF Splitter': 'splitter',
+      'PDF Merger': 'pdf',
+      'PDF Summarizer': 'pdf',
+      'File Summarizer': 'pdf',
+      'Language Detector': 'translator',
+      'AI Document Q&A': 'parsing',
+      'AI Grammar Checker': 'parsing',
+      'AI Document Rewriter': 'parsing'
+    };
+
+    async function runToolOnFile(toolName, file) {
+      if (!file) { showToast('Upload a file first'); return; }
+
+      // ─── Step 1: enforce file-size limits ─────
+      const toolKey = TOOL_LIMIT_KEY[toolName] || 'pdf';
+      const check = checkFileLimits(file, toolKey);
+      if (!check.ok) {
+        showResultModal('File too large', toolName,
+          '<p>' + escapeHtml(check.reason) + '</p>' +
+          '<p style="color:var(--ink-3);font-size:.86rem;margin-top:8px">' + escapeHtml(check.recommendation) + '</p>');
+        return;
+      }
+
+      let processingMode = 'full';
+      if (check.partial) {
+        const choice = await askPartialProcessing(toolName, file, check.reason);
+        if (choice === 'cancel') return;
+        processingMode = choice; // 'partial' or 'full'
+      }
+
+      // ─── Step 2: show processing modal ─────────
+      showProcessingModal(toolName, 'Reading ' + file.name + '…');
+
+      // ─── Step 3: extract text with the right page limit ─
+      const isPdf = /\.pdf$/i.test(file.name);
+      let pdfPageCount = null;
+      if (isPdf) {
+        try { pdfPageCount = await getPdfPageCount(file); } catch (e) {}
+      }
+
+      const opts = { onProgress: updateProcessingStatus };
+      if (isPdf && processingMode === 'partial') {
+        // Per-tool page limits when partial mode is selected
+        const partialPages = ({
+          'pdf':         LIMITS.pdf.softPages,
+          'splitter':    LIMITS.splitter.softPages,
+          'compressor':  LIMITS.pdf.softPages,
+          'parsing':     LIMITS.pdf.softPages,
+          'translator':  LIMITS.pdf.softPages,
+          'ocr':         LIMITS.ocr.softPages
+        })[toolKey] || 5;
+        opts.maxPages = partialPages;
+      } else if (isPdf && pdfPageCount && pdfPageCount > LIMITS.pdf.hardPages) {
+        // Even in "full" mode, never exceed the hard page cap
+        opts.maxPages = LIMITS.pdf.hardPages;
+        processingMode = 'partial';
+      }
+
+      let text = '';
+      try {
+        text = await extractTextFromFile(file, opts);
+      } catch (err) {
+        showResultModal('Could not read file', toolName,
+          '<p>We couldn\'t extract text from <b>' + escapeHtml(file.name) + '</b>.</p>' +
+          '<p style="color:var(--ink-3);font-size:.86rem;margin-top:8px">' + escapeHtml(err.message || 'Unknown error') + '</p>' +
+          '<div class="modal-cta">' +
+            '<button class="btn btn-accent" onclick="document.querySelector(&quot;.tool[data-tool=\\&quot;' + escapeHtml(toolName) + '\\&quot;]&quot;)?.click()">Retry</button>' +
+          '</div>');
+        return;
+      }
+
+      if (!text || text.trim().length < 5) {
+        showResultModal('No text found', toolName,
+          '<p><b>' + escapeHtml(file.name) + '</b> appears to contain no extractable text.</p>' +
+          '<p style="color:var(--ink-3);font-size:.86rem;margin-top:8px">If this is a scanned document, you would need OCR — that\'s available via the Extract Text tool with a scanned PDF.</p>');
+        return;
+      }
+
+      // Apply per-tool character caps for very text-heavy results
+      const charLimit = LIMITS[toolKey] && LIMITS[toolKey].hardChars;
+      let textWasTrimmed = false;
+      if (charLimit && text.length > charLimit) {
+        text = text.slice(0, charLimit);
+        textWasTrimmed = true;
+      }
+
+      const wordCount = (text.match(/\S+/g) || []).length;
+      const charCount = text.length;
+      const partialBanner = (processingMode === 'partial' || textWasTrimmed)
+        ? '<div style="background:#FEF6EE;border:1px solid #FBE0BC;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:.84rem;color:var(--warn)">' +
+          'Partial processing: ' +
+          (opts.maxPages && pdfPageCount ? 'first ' + opts.maxPages + ' of ' + pdfPageCount + ' pages' : '') +
+          (textWasTrimmed ? (opts.maxPages ? ' · ' : '') + 'content trimmed to ' + charLimit.toLocaleString() + ' characters' : '') +
+          '.</div>'
+        : '';
+
+      switch (toolName) {
+
+        case 'PDF Editor':
+        case 'Extract Text': {
+          // Real text extraction → editable textarea + download
+          showResultModal(
+            'Extracted text from <em>' + escapeHtml(file.name) + '</em>',
+            toolName,
+            partialBanner +
+            '<p style="color:var(--ink-2);margin-bottom:10px">' + wordCount + ' words · ' + charCount.toLocaleString() + ' characters extracted. Edit below or download.</p>' +
+            '<textarea id="extractedText" style="width:100%;min-height:280px;padding:12px;border:1px solid var(--line);border-radius:10px;font-family:var(--mono);font-size:.82rem;line-height:1.5">' + escapeHtml(text) + '</textarea>' +
+            '<div class="modal-cta">' +
+              '<button class="btn btn-accent" onclick="(function(){var t=document.getElementById(\'extractedText\').value;var b=new Blob([t],{type:\'text/plain\'});var u=URL.createObjectURL(b);var a=document.createElement(\'a\');a.href=u;a.download=\'' + escapeHtml(file.name.replace(/\.[^.]+$/, '')) + '.txt\';a.click();URL.revokeObjectURL(u);})()">Download as .txt</button>' +
+            '</div>'
+          );
+          break;
+        }
+
+        case 'PDF → Word': {
+          // Convert extracted text to a Word-compatible HTML document
+          const html = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:Calibri,Arial,sans-serif;font-size:11pt;line-height:1.4">' +
+            text.split('\n').map(function (line) { return '<p>' + escapeHtml(line) + '</p>'; }).join('') +
+            '</body></html>';
+          const baseName = file.name.replace(/\.[^.]+$/, '');
+          downloadTextFile(baseName + '.doc',
+            '\ufeff' + html,
+            'application/msword');
+          showResultModal(
+            'Converted to Word',
+            toolName,
+            partialBanner + '<p>Saved <b>' + escapeHtml(baseName) + '.doc</b> — ' + wordCount + ' words across ' + (text.split('\n').length) + ' paragraphs.</p>' +
+            '<p style="color:var(--ink-3);font-size:.86rem;margin-top:8px">Note: this is a basic HTML-to-Word conversion. Complex formatting, images, and tables in the original PDF are not preserved.</p>'
+          );
+          break;
+        }
+
+        case 'Word → PDF': {
+          // Render the extracted text into a hidden printable element, then html2pdf it
+          const printNode = document.createElement('div');
+          printNode.style.cssText = 'position:fixed;top:0;left:-99999px;width:720px;background:#fff;padding:40px;font-family:Georgia,serif;font-size:11pt;line-height:1.5';
+          printNode.innerHTML = text.split('\n').map(function (line) {
+            return '<p style="margin:0 0 10pt">' + escapeHtml(line) + '</p>';
+          }).join('');
+          document.body.appendChild(printNode);
+
+          const baseName = file.name.replace(/\.[^.]+$/, '');
+          if (typeof window.html2pdf === 'undefined') {
+            showToast('PDF library still loading — try again');
+            document.body.removeChild(printNode);
+            return;
+          }
+          try {
+            await window.html2pdf().set({
+              margin: [12, 12, 12, 12],
+              filename: baseName + '.pdf',
+              image: { type: 'jpeg', quality: 0.98 },
+              html2canvas: { scale: 2, backgroundColor: '#ffffff' },
+              jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
+            }).from(printNode).save();
+            showResultModal('Converted to PDF', toolName,
+              partialBanner + '<p>Saved <b>' + escapeHtml(baseName) + '.pdf</b> — ' + wordCount + ' words.</p>');
+          } catch (err) {
+            console.error(err);
+            showToast('PDF generation failed');
+          } finally {
+            if (printNode.parentNode) printNode.parentNode.removeChild(printNode);
+          }
+          break;
+        }
+
+        case 'PDF Compressor': {
+          // For text-extractable PDFs, "compression" = re-render through html2pdf
+          // with conservative settings. For non-PDF input, just inform.
+          if (!/\.pdf$/i.test(file.name)) {
+            showResultModal('Not a PDF', toolName,
+              '<p>This tool works on PDF files. <b>' + escapeHtml(file.name) + '</b> is a different format — try the converter first.</p>');
+            return;
+          }
+          const printNode = document.createElement('div');
+          printNode.style.cssText = 'position:fixed;top:0;left:-99999px;width:720px;background:#fff;padding:32px;font-family:Helvetica,Arial,sans-serif;font-size:10pt;line-height:1.4';
+          printNode.innerHTML = text.split('\n').map(function (line) {
+            return '<p style="margin:0 0 6pt">' + escapeHtml(line) + '</p>';
+          }).join('');
+          document.body.appendChild(printNode);
+          const baseName = file.name.replace(/\.[^.]+$/, '');
+          try {
+            await window.html2pdf().set({
+              margin: [10, 10, 10, 10],
+              filename: baseName + '-compressed.pdf',
+              image: { type: 'jpeg', quality: 0.7 },
+              html2canvas: { scale: 1, backgroundColor: '#ffffff' },
+              jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait', compress: true }
+            }).from(printNode).save();
+            showResultModal('Compressed PDF',
+              toolName,
+              partialBanner + '<p>Saved <b>' + escapeHtml(baseName) + '-compressed.pdf</b>.</p>' +
+              '<p style="color:var(--ink-3);font-size:.86rem;margin-top:8px">Note: this is a text-only re-flow. Original images/scans are not preserved. For image-heavy PDFs use a dedicated tool.</p>');
+          } catch (err) {
+            showToast('Compression failed');
+          } finally {
+            if (printNode.parentNode) printNode.parentNode.removeChild(printNode);
+          }
+          break;
+        }
+
+        case 'PDF Splitter': {
+          // Split text into ~equal sections by paragraph count
+          if (!/\.pdf$/i.test(file.name)) {
+            showResultModal('Not a PDF', toolName,
+              '<p>This tool works on PDF files. <b>' + escapeHtml(file.name) + '</b> is a different format.</p>');
+            return;
+          }
+          const paras = text.split(/\n\s*\n/).filter(function (p) { return p.trim(); });
+          const half = Math.ceil(paras.length / 2);
+          const part1 = paras.slice(0, half).join('\n\n');
+          const part2 = paras.slice(half).join('\n\n');
+          const baseName = file.name.replace(/\.[^.]+$/, '');
+          downloadTextFile(baseName + '-part1.txt', part1);
+          setTimeout(function () { downloadTextFile(baseName + '-part2.txt', part2); }, 400);
+          showResultModal('Split into 2 parts', toolName,
+            partialBanner + '<p><b>' + escapeHtml(file.name) + '</b> split by paragraph count.</p>' +
+            '<ul style="margin:8px 0 0 18px;color:var(--ink-2);font-size:.9rem"><li><b>Part 1</b>: ' + half + ' paragraphs (~' + Math.round(part1.length/1024) + ' KB)</li>' +
+            '<li><b>Part 2</b>: ' + (paras.length - half) + ' paragraphs (~' + Math.round(part2.length/1024) + ' KB)</li></ul>' +
+            '<p style="color:var(--ink-3);font-size:.86rem;margin-top:10px">Both parts saved as .txt. Page-based splitting requires PDF page extraction beyond text reflow.</p>');
+          break;
+        }
+
+        case 'PDF Merger': {
+          showResultModal('PDF Merger needs multiple files',
+            toolName,
+            '<p>Drop a second file to merge it with <b>' + escapeHtml(file.name) + '</b>.</p>' +
+            '<p style="color:var(--ink-3);font-size:.86rem;margin-top:8px">Multi-file merge will be added in a future update — current text re-flow merging is available below.</p>' +
+            '<div class="modal-cta">' +
+              '<button class="btn btn-accent" id="mergeAddSecond">Add second file</button>' +
+            '</div>');
+          // Wire up the button
+          setTimeout(function () {
+            const btn = document.getElementById('mergeAddSecond');
+            if (btn) btn.addEventListener('click', function () {
+              pickFile(async function (file2) {
+                try {
+                  const text2 = await extractTextFromFile(file2);
+                  const merged = text + '\n\n— — —\n\n' + text2;
+                  const baseName = file.name.replace(/\.[^.]+$/, '') + '-merged';
+                  downloadTextFile(baseName + '.txt', merged);
+                  showResultModal('Merged 2 files',
+                    toolName,
+                    '<p>Combined text from <b>' + escapeHtml(file.name) + '</b> and <b>' + escapeHtml(file2.name) + '</b>.</p>' +
+                    '<p>Saved as <b>' + escapeHtml(baseName) + '.txt</b> · ' + ((merged.match(/\S+/g) || []).length) + ' words total.</p>');
+                } catch (err) {
+                  showToast('Merge failed: ' + err.message);
+                }
+              }, '.pdf,.docx,.txt');
+            });
+          }, 100);
+          break;
+        }
+
+        case 'PDF Summarizer':
+        case 'File Summarizer': {
+          // Real summarization: extract sentences with the highest-frequency content words
+          const summary = summarizeText(text, 5);
+          const keyTopics = topNTokens(text, 8);
+          showResultModal(
+            'Summary of <em>' + escapeHtml(file.name) + '</em>',
+            toolName,
+            partialBanner + '<p style="color:var(--ink-3);font-size:.84rem;margin-bottom:14px">' + wordCount.toLocaleString() + ' words → ' + summary.length + ' key sentences</p>' +
+            '<h3>Key takeaways</h3><ul>' +
+              summary.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') +
+            '</ul>' +
+            '<h3>Top topics</h3>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' +
+              keyTopics.map(function (t) { return '<span style="padding:4px 10px;background:var(--accent-soft);color:var(--accent-deep);border-radius:99px;font-size:.84rem;font-weight:500">' + escapeHtml(t) + '</span>'; }).join('') +
+            '</div>' +
+            '<div class="modal-cta">' +
+              '<button class="btn btn-ghost" id="downloadSummary">Download summary</button>' +
+            '</div>'
+          );
+          setTimeout(function () {
+            const dl = document.getElementById('downloadSummary');
+            if (dl) dl.addEventListener('click', function () {
+              const baseName = file.name.replace(/\.[^.]+$/, '');
+              const summaryDoc = 'Summary of ' + file.name + '\n' +
+                '═══════════════════════════════════════════\n\n' +
+                'KEY TAKEAWAYS\n\n' +
+                summary.map(function (s, i) { return (i + 1) + '. ' + s; }).join('\n\n') +
+                '\n\nTOP TOPICS\n' + keyTopics.join(', ');
+              downloadTextFile(baseName + '-summary.txt', summaryDoc);
+            });
+          }, 100);
+          break;
+        }
+
+        case 'Language Detector': {
+          // Fully functional in-browser: detect language, surface document
+          // stats, let the user copy the extracted text. No external links.
+          const sample = text.length > LIMITS.translator.softChars ? text.slice(0, LIMITS.translator.softChars) : text;
+          const wasLimited = text.length > LIMITS.translator.softChars;
+          const lang = detectLanguageHint(sample);
+          const sentences = sample.split(/(?<=[.!?])\s+/).filter(function (s) { return s.trim().length > 5; }).length;
+          const paragraphs = sample.split(/\n\s*\n/).filter(function (p) { return p.trim().length > 5; }).length;
+          const avgSentenceLen = sentences ? Math.round((sample.match(/\S+/g) || []).length / sentences) : 0;
+          showResultModal(
+            'Document analysis',
+            toolName,
+            (wasLimited
+              ? '<div style="background:#FEF6EE;border:1px solid #FBE0BC;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:.84rem;color:var(--warn)">' +
+                'Partial analysis: only the first ' + LIMITS.translator.softChars.toLocaleString() + ' characters were processed (file has ' + text.length.toLocaleString() + ').' +
+                '</div>'
+              : '') +
+            '<div class="stat-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">' +
+              '<div style="padding:14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:10px"><small style="font-family:var(--mono);font-size:.7rem;color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase">Language</small><b style="display:block;font-family:var(--serif);font-size:1.4rem;margin-top:2px">' + escapeHtml(lang) + '</b></div>' +
+              '<div style="padding:14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:10px"><small style="font-family:var(--mono);font-size:.7rem;color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase">Words</small><b style="display:block;font-family:var(--serif);font-size:1.4rem;margin-top:2px">' + (sample.match(/\S+/g) || []).length.toLocaleString() + '</b></div>' +
+              '<div style="padding:14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:10px"><small style="font-family:var(--mono);font-size:.7rem;color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase">Sentences</small><b style="display:block;font-family:var(--serif);font-size:1.4rem;margin-top:2px">' + sentences + '</b></div>' +
+              '<div style="padding:14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:10px"><small style="font-family:var(--mono);font-size:.7rem;color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase">Avg words / sentence</small><b style="display:block;font-family:var(--serif);font-size:1.4rem;margin-top:2px">' + avgSentenceLen + '</b></div>' +
+            '</div>' +
+            '<p style="color:var(--ink-3);font-size:.84rem;margin-bottom:6px">Translation needs an external API and is not bundled. You can copy the text below and paste it anywhere.</p>' +
+            '<textarea readonly style="width:100%;min-height:160px;padding:12px;border:1px solid var(--line);border-radius:10px;font-family:var(--mono);font-size:.78rem;line-height:1.5;background:var(--bg-soft);color:var(--ink-2)" id="langText">' + escapeHtml(sample.slice(0, 1500)) + (sample.length > 1500 ? '\n…' : '') + '</textarea>' +
+            '<div class="modal-cta">' +
+              '<button class="btn btn-accent" id="copyLangText">Copy text to clipboard</button>' +
+            '</div>'
+          );
+          setTimeout(function () {
+            const btn = document.getElementById('copyLangText');
+            if (btn) btn.addEventListener('click', async function () {
+              try {
+                await navigator.clipboard.writeText(sample);
+                btn.textContent = 'Copied ✓';
+                setTimeout(function () { btn.textContent = 'Copy text to clipboard'; }, 2000);
+              } catch (err) {
+                const ta = document.getElementById('langText');
+                if (ta) { ta.select(); document.execCommand('copy'); btn.textContent = 'Copied ✓'; setTimeout(function () { btn.textContent = 'Copy text to clipboard'; }, 2000); }
+              }
+            });
+          }, 100);
+          break;
+        }
+
+        case 'AI Document Q&A': {
+          // Real Q&A: simple keyword-based "search" within the text
+          showResultModal(
+            'Ask about <em>' + escapeHtml(file.name) + '</em>',
+            toolName,
+            partialBanner + '<p style="color:var(--ink-3);font-size:.84rem;margin-bottom:14px">' + wordCount.toLocaleString() + ' words indexed. Ask a question about the content below.</p>' +
+            '<div style="display:flex;gap:8px;margin-bottom:12px">' +
+              '<input type="text" id="qaInput" placeholder="e.g. What are the main topics?" style="flex:1;padding:11px 14px;border:1px solid var(--line);border-radius:10px;font-size:.94rem">' +
+              '<button class="btn btn-accent" id="qaAsk">Ask</button>' +
+            '</div>' +
+            '<div id="qaResults"></div>'
+          );
+          setTimeout(function () {
+            const input = document.getElementById('qaInput');
+            const askBtn = document.getElementById('qaAsk');
+            const results = document.getElementById('qaResults');
+            const handle = function () {
+              const q = input.value.trim();
+              if (!q) return;
+              const sentences = text.split(/(?<=[.!?])\s+/).filter(function (s) { return s.length > 20; });
+              const qTokens = tokenize(q);
+              if (qTokens.length === 0) {
+                results.innerHTML = '<p style="color:var(--ink-3);font-style:italic">Ask a more specific question.</p>';
+                return;
+              }
+              const scored = sentences.map(function (s) {
+                const sLower = s.toLowerCase();
+                const hits = qTokens.filter(function (t) { return sLower.indexOf(t) !== -1; }).length;
+                return { sentence: s, score: hits };
+              }).filter(function (x) { return x.score > 0; });
+              scored.sort(function (a, b) { return b.score - a.score; });
+              const top = scored.slice(0, 3);
+              if (top.length === 0) {
+                results.innerHTML = '<p style="color:var(--ink-3);font-style:italic">No relevant passages found in the document.</p>';
+              } else {
+                results.innerHTML =
+                  '<h3 style="margin-bottom:8px">Most relevant passages</h3>' +
+                  top.map(function (r) {
+                    return '<div style="padding:12px 14px;border-left:3px solid var(--accent);background:var(--bg-soft);border-radius:6px;margin-bottom:8px;font-size:.9rem;line-height:1.5;color:var(--ink)">' + escapeHtml(r.sentence) + '</div>';
+                  }).join('');
+              }
+            };
+            if (askBtn) askBtn.addEventListener('click', handle);
+            if (input) input.addEventListener('keydown', function (e) { if (e.key === 'Enter') handle(); });
+            if (input) input.focus();
+          }, 100);
+          break;
+        }
+
+        case 'AI Grammar Checker': {
+          const issues = grammarCheck(text);
+          showResultModal(
+            'Grammar check on <em>' + escapeHtml(file.name) + '</em>',
+            toolName,
+            partialBanner + '<p style="color:var(--ink-3);font-size:.84rem;margin-bottom:14px">' + wordCount.toLocaleString() + ' words analyzed · ' + issues.length + ' issues flagged</p>' +
+            (issues.length === 0
+              ? '<p style="padding:20px;background:var(--accent-soft);color:var(--accent-deep);border-radius:10px;font-weight:500">No issues found. Your document looks clean.</p>'
+              : '<div style="display:flex;flex-direction:column;gap:10px">' +
+                issues.slice(0, 12).map(function (issue) {
+                  return '<div style="padding:14px;border:1px solid var(--line);border-radius:10px">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b style="font-size:.88rem">' + escapeHtml(issue.type) + '</b><small style="font-family:var(--mono);color:var(--ink-3);font-size:.72rem">' + escapeHtml(issue.severity) + '</small></div>' +
+                    '<p style="font-size:.86rem;color:var(--ink-2);margin:0 0 4px">' + escapeHtml(issue.message) + '</p>' +
+                    (issue.snippet ? '<code style="font-size:.8rem;color:var(--warn);background:#FEF6EE;padding:2px 6px;border-radius:4px">' + escapeHtml(issue.snippet) + '</code>' : '') +
+                  '</div>';
+                }).join('') +
+                (issues.length > 12 ? '<p style="font-size:.84rem;color:var(--ink-3);text-align:center;margin-top:6px">… and ' + (issues.length - 12) + ' more issues</p>' : '') +
+              '</div>')
+          );
+          break;
+        }
+
+        case 'AI Document Rewriter': {
+          // Offer 3 tone variants of the first paragraph
+          const firstPara = (text.split(/\n\s*\n/).find(function (p) { return p.trim().length > 80; }) || text.slice(0, 500)).trim();
+          const concise = condenseText(firstPara);
+          const formal = formalizeText(firstPara);
+          const punchy = punchyText(firstPara);
+          showResultModal(
+            'Rewrite suggestions',
+            toolName,
+            partialBanner + '<p style="color:var(--ink-3);font-size:.84rem;margin-bottom:14px">Three tone variants for the opening paragraph of <b>' + escapeHtml(file.name) + '</b></p>' +
+            '<h3>Original</h3>' +
+            '<div style="padding:14px;background:var(--bg-soft);border-radius:8px;font-size:.88rem;line-height:1.5;margin-bottom:14px">' + escapeHtml(firstPara) + '</div>' +
+            '<h3>Concise</h3>' +
+            '<div style="padding:14px;border:1px solid var(--accent);background:var(--accent-soft);border-radius:8px;font-size:.88rem;line-height:1.5;margin-bottom:14px">' + escapeHtml(concise) + '</div>' +
+            '<h3>Formal</h3>' +
+            '<div style="padding:14px;border:1px solid var(--line);border-radius:8px;font-size:.88rem;line-height:1.5;margin-bottom:14px">' + escapeHtml(formal) + '</div>' +
+            '<h3>Punchy</h3>' +
+            '<div style="padding:14px;border:1px solid var(--line);border-radius:8px;font-size:.88rem;line-height:1.5">' + escapeHtml(punchy) + '</div>'
+          );
+          break;
+        }
+
+        default:
+          showResultModal(toolName, 'Tool',
+            '<p>This tool isn\'t implemented yet. We\'ll add it in a future update.</p>');
+      }
+
+      addActivity('tool', toolName + ' → ' + file.name);
+    }
+
+    // ─── Helper: extractive summarization ───────
+    function summarizeText(text, n) {
+      const sentences = text.split(/(?<=[.!?])\s+/).filter(function (s) { return s.trim().length > 15 && s.trim().length < 500; });
+      if (sentences.length === 0) {
+        // Fallback: split on newlines if no clear sentence breaks
+        const lines = text.split('\n').filter(function (l) { return l.trim().length > 15; });
+        if (lines.length === 0) return [text.slice(0, 200)];
+        return lines.slice(0, n || 5);
+      }
+      // Score sentences by sum of frequencies of their content words
+      const tokens = tokenize(text);
+      const freq = new Map();
+      for (const t of tokens) freq.set(t, (freq.get(t) || 0) + 1);
+      const maxFreq = Math.max.apply(null, Array.from(freq.values())) || 1;
+      const scored = sentences.map(function (s, i) {
+        const tks = tokenize(s);
+        const score = tks.reduce(function (acc, t) { return acc + (freq.get(t) || 0) / maxFreq; }, 0);
+        // Position bias: earlier sentences get a small boost
+        const posBoost = Math.max(0, 1 - i / sentences.length) * 0.3;
+        return { sentence: s.trim(), score: score / Math.max(1, tks.length) + posBoost, idx: i };
+      });
+      scored.sort(function (a, b) { return b.score - a.score; });
+      const top = scored.slice(0, n || 5);
+      // Return in original order
+      top.sort(function (a, b) { return a.idx - b.idx; });
+      return top.map(function (s) { return s.sentence; });
+    }
+
+    function topNTokens(text, n) {
+      const tokens = tokenize(text);
+      const freq = new Map();
+      for (const t of tokens) freq.set(t, (freq.get(t) || 0) + 1);
+      // Lowered threshold: any token, not just freq >= 2
+      const arr = Array.from(freq.entries());
+      arr.sort(function (a, b) { return b[1] - a[1]; });
+      return arr.slice(0, n || 8).map(function (e) { return e[0]; });
+    }
+
+    function detectLanguageHint(text) {
+      const sample = text.slice(0, 2000).toLowerCase();
+      // Score each language by counting unique-to-it stopwords. Higher score wins.
+      const scores = {
+        English: 0,
+        Spanish: 0,
+        French: 0,
+        German: 0,
+        Italian: 0
+      };
+      const tokens = sample.split(/[^a-záéíóúñüäöß]+/).filter(Boolean);
+      for (const t of tokens) {
+        // English-distinct
+        if (/^(the|and|for|with|are|was|were|have|been|that|this|from|will)$/.test(t)) scores.English++;
+        // Spanish-distinct
+        else if (/^(los|las|también|hacer|nuestro|hicieron|fueron|haya|tiempo|cosas)$/.test(t)) scores.Spanish++;
+        // French-distinct
+        else if (/^(nous|vous|sont|était|aussi|notre|votre|très|être|avec|pour|dans|leur|sans)$/.test(t)) scores.French++;
+        // German-distinct
+        else if (/^(und|ist|nicht|auch|unser|sein|werden|haben|wird|nicht|kann)$/.test(t)) scores.German++;
+        // Italian-distinct
+        else if (/^(sono|nostro|essere|come|tempo|anche|della|delle|dello|sull)$/.test(t)) scores.Italian++;
+      }
+      let best = 'unknown';
+      let max = 0;
+      for (const lang in scores) {
+        if (scores[lang] > max) { max = scores[lang]; best = lang; }
+      }
+      return max > 0 ? best : 'unknown';
+    }
+
+    function grammarCheck(text) {
+      const issues = [];
+
+      // 1. Double spaces
+      const dblSpaces = (text.match(/  +/g) || []);
+      if (dblSpaces.length > 0) {
+        issues.push({ type: 'Spacing', severity: 'low', message: dblSpaces.length + ' instance' + (dblSpaces.length === 1 ? '' : 's') + ' of double-spaces between words.', snippet: '" "' });
+      }
+
+      // 2. Common typos — case-insensitive, word-boundaried
+      const typos = [
+        ['teh', 'the'],
+        ['recieve', 'receive'],
+        ['seperate', 'separate'],
+        ['occured', 'occurred'],
+        ['definately', 'definitely'],
+        ['basicly', 'basically'],
+        ['accomodate', 'accommodate'],
+        ['untill', 'until'],
+        ['publically', 'publicly'],
+        ['priviledge', 'privilege'],
+        ['embarass', 'embarrass']
+      ];
+      typos.forEach(function (pair) {
+        const re = new RegExp('\\b' + pair[0] + '\\b', 'gi');
+        const m = text.match(re);
+        if (m) issues.push({
+          type: 'Spelling',
+          severity: 'medium',
+          message: m.length + ' instance' + (m.length === 1 ? '' : 's') + ' of "' + pair[0] + '" — should be "' + pair[1] + '".',
+          snippet: '"' + pair[0] + '" → "' + pair[1] + '"'
+        });
+      });
+
+      // 3. Sentence start with lowercase (after period + space)
+      const lcStart = text.match(/[.!?]\s+([a-z])/g);
+      if (lcStart && lcStart.length > 0) {
+        issues.push({
+          type: 'Capitalization',
+          severity: 'medium',
+          message: lcStart.length + ' sentence' + (lcStart.length === 1 ? '' : 's') + ' starting with a lowercase letter.',
+          snippet: lcStart[0].trim()
+        });
+      }
+
+      // 4. Missing space after period
+      const noSpace = text.match(/[a-z]\.[A-Z][a-z]/g);
+      if (noSpace) {
+        issues.push({
+          type: 'Punctuation',
+          severity: 'low',
+          message: noSpace.length + ' missing space' + (noSpace.length === 1 ? '' : 's') + ' after a period.',
+          snippet: noSpace[0]
+        });
+      }
+
+      // 5. Repeated word (back-to-back)
+      const repeated = text.match(/\b(\w+)\s+\1\b/gi);
+      if (repeated) {
+        issues.push({
+          type: 'Repetition',
+          severity: 'medium',
+          message: repeated.length + ' word' + (repeated.length === 1 ? '' : 's') + ' repeated back-to-back.',
+          snippet: repeated[0]
+        });
+      }
+
+      // 6. there/their/they're confusion (heuristic)
+      const theirAreMatch = text.match(/\btheir\s+(?:is|are|was|were)\b/gi);
+      if (theirAreMatch) {
+        issues.push({
+          type: 'Word choice',
+          severity: 'medium',
+          message: theirAreMatch.length + ' likely confusion of "their" and "there".',
+          snippet: theirAreMatch[0] + ' → "there ' + theirAreMatch[0].split(/\s+/)[1] + '"'
+        });
+      }
+
+      // 7. Very long sentences (>40 words)
+      const sentences = text.split(/(?<=[.!?])\s+/);
+      const longOnes = sentences.filter(function (s) { return (s.match(/\S+/g) || []).length > 40; });
+      if (longOnes.length > 0) {
+        issues.push({
+          type: 'Readability',
+          severity: 'low',
+          message: longOnes.length + ' very long sentence' + (longOnes.length === 1 ? '' : 's') + ' (40+ words). Consider breaking up.',
+          snippet: ''
+        });
+      }
+
+      // 8. Passive voice cues
+      const passive = (text.match(/\b(?:was|were|is|are|been|being|be)\s+\w+(?:ed|en)\b/gi) || []);
+      if (passive.length > 5) {
+        issues.push({
+          type: 'Style',
+          severity: 'low',
+          message: passive.length + ' likely passive-voice constructions. Active voice often reads stronger.',
+          snippet: passive[0]
+        });
+      }
+
+      // 9. Missing Oxford comma (heuristic — flagging is informational only)
+      const noOxford = text.match(/\w+,\s+\w+\s+and\s+\w+/g);
+      if (noOxford && noOxford.length > 2) {
+        issues.push({
+          type: 'Style',
+          severity: 'low',
+          message: noOxford.length + ' lists without an Oxford comma. Style preference, but consistency matters.',
+          snippet: noOxford[0]
+        });
+      }
+
+      return issues;
+    }
+
+    function condenseText(text) {
+      // Remove redundant words and shorten
+      return text
+        .replace(/\b(very|really|quite|rather|somewhat|perhaps|maybe|just|simply|basically|essentially|actually|literally)\s+/gi, '')
+        .replace(/\bin order to\b/gi, 'to')
+        .replace(/\bdue to the fact that\b/gi, 'because')
+        .replace(/\bat this point in time\b/gi, 'now')
+        .replace(/\bin the event that\b/gi, 'if')
+        .replace(/\bfor the purpose of\b/gi, 'for')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function formalizeText(text) {
+      return text
+        .replace(/\bcan't\b/gi, 'cannot')
+        .replace(/\bwon't\b/gi, 'will not')
+        .replace(/\bdon't\b/gi, 'do not')
+        .replace(/\bI'm\b/gi, 'I am')
+        .replace(/\bisn't\b/gi, 'is not')
+        .replace(/\bdoesn't\b/gi, 'does not')
+        .replace(/\bgot\b/gi, 'obtained')
+        .replace(/\bget\b/gi, 'obtain')
+        .replace(/\bbig\b/gi, 'substantial')
+        .replace(/\bok\b/gi, 'acceptable')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function punchyText(text) {
+      // Take first sentence + tighten
+      const first = text.split(/(?<=[.!?])\s+/)[0] || text;
+      return condenseText(first);
     }
 
     on(byId('toolCats'), 'click', function (e) {
@@ -1118,16 +2685,65 @@
     on(byId('authSubmit'), 'click', function (e) {
       e.preventDefault();
       const isSignup = $('#authTabs button[data-mode="signup"].active') !== null;
+      const emailInput = $('#authForm input[type="email"]');
+      const passInput = $('#authForm input[type="password"]');
+      const email = emailInput && emailInput.value.trim();
+      const pass = passInput && passInput.value;
+
+      if (!email || email.indexOf('@') === -1) {
+        showToast('Please enter a valid email');
+        return;
+      }
+      if (!pass || pass.length < 6) {
+        showToast('Password must be at least 6 characters');
+        return;
+      }
+
+      // Mock login: set sessionStorage flag → enables persistence
+      state.auth = {
+        loggedIn: true,
+        email: email,
+        since: state.auth.since || new Date().toISOString()
+      };
+      try { sessionStorage.setItem(STATE_KEY + ':session', '1'); } catch (e) {}
+      persist();
+
       showToast(isSignup ? 'Account created — welcome!' : 'Signed in');
+      renderAuthState();
+      renderDashboard();
       setTimeout(function () { location.hash = '#dashboard'; }, 600);
     });
 
-    // ─── Dashboard nav ───────────────────────────
-    $$('.dash-nav button').forEach(function (b) {
-      b.addEventListener('click', function () {
-        $$('.dash-nav button').forEach(function (x) { x.classList.remove('active'); });
-        b.classList.add('active');
+    // ─── Dashboard sidebar tabs ──────────────────
+    on(byId('dashNav'), 'click', function (e) {
+      const btn = e.target && e.target.closest && e.target.closest('button[data-tab]');
+      if (!btn) return;
+      $$('#dashNav button').forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      const tab = btn.dataset.tab;
+      $$('.dash-panel').forEach(function (p) {
+        if (p.dataset.panel === tab) p.removeAttribute('hidden');
+        else p.setAttribute('hidden', '');
       });
+    });
+
+    on(byId('acctSignOut'), 'click', function () {
+      try { sessionStorage.removeItem(STATE_KEY + ':session'); } catch (e) {}
+      state.auth = { loggedIn: false, email: null, since: null };
+      // We DON'T wipe localStorage on sign-out — that lets users sign back in
+      // and find their data still there.
+      showToast('Signed out');
+      renderAuthState();
+      renderDashboard();
+      setTimeout(function () { location.hash = '#home'; }, 400);
+    });
+
+    on(byId('acctClearData'), 'click', function () {
+      if (!confirm('Permanently delete all your saved data? This cannot be undone.')) return;
+      clearAllData();
+      // Reload so the form repopulates with empty defaults
+      showToast('All data cleared');
+      setTimeout(function () { location.reload(); }, 400);
     });
 
     // ─── Dashboard doc actions: real downloads ───
