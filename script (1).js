@@ -1368,27 +1368,200 @@
       }, true);
     }
 
-    // ─── REAL PDF DOWNLOAD via html2pdf.js ───────
-    // Robust: waits for fonts to load, skips empty content, uses a clone
-    // attached to a known-rendered container so html2canvas captures it cleanly.
+
+    // ─── PDF DOWNLOAD ──────────────────────────────────
+    // Generates the PDF directly with jsPDF (no html2canvas/html2pdf rasterization).
+    // This is the reliable path: it produces real text in the PDF, supports
+    // multiple pages, and never has scroll/clipping/blank-canvas issues.
+
+    function _getJsPDFCtor() {
+      // jsPDF is bundled inside html2pdf.bundle.min.js. Newer versions expose
+      // it as window.jspdf.jsPDF; older versions as window.jsPDF.
+      return (window.jspdf && window.jspdf.jsPDF) || window.jsPDF || null;
+    }
+
+    function downloadResumeAsPdfDirect(filename) {
+      const jsPDF = _getJsPDFCtor();
+      if (!jsPDF) return null;
+
+      const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 18;
+      const contentWidth = pageWidth - margin * 2;
+      let y = margin;
+
+      function addText(text, opts) {
+        opts = opts || {};
+        const size = opts.size || 10;
+        const style = opts.style || 'normal';
+        const color = opts.color || [10, 26, 51];
+        const lineHeight = opts.lineHeight || size * 0.5;
+        const after = opts.after || 2;
+        doc.setFont(opts.font || 'helvetica', style);
+        doc.setFontSize(size);
+        doc.setTextColor(color[0], color[1], color[2]);
+        const lines = doc.splitTextToSize(text || '', contentWidth);
+        for (const line of lines) {
+          if (y + lineHeight > pageHeight - margin) { doc.addPage(); y = margin; }
+          doc.text(line, margin, y);
+          y += lineHeight;
+        }
+        y += after;
+      }
+
+      function addDivider() {
+        if (y + 4 > pageHeight - margin) { doc.addPage(); y = margin; }
+        doc.setDrawColor(220, 222, 230);
+        doc.setLineWidth(0.2);
+        doc.line(margin, y, pageWidth - margin, y);
+        y += 4;
+      }
+
+      function addSectionHeader(text) {
+        if (y + 8 > pageHeight - margin) { doc.addPage(); y = margin; }
+        y += 4;
+        addText(text.toUpperCase(), {
+          size: 9, style: 'bold', color: [11, 122, 85], after: 1
+        });
+        addDivider();
+      }
+
+      const form = byId('resumeForm');
+      const get = function (k) {
+        if (!form) return '';
+        const el = form.querySelector('[data-field="' + k + '"]');
+        return el ? (el.value || '').trim() : '';
+      };
+
+      const name     = get('name')     || 'Your Name';
+      const title    = get('title');
+      const email    = get('email');
+      const phone    = get('phone');
+      const location = get('location');
+      const summary  = get('summary');
+      const role1    = get('role1');
+      const company1 = get('company1');
+      const dates1   = get('dates1');
+      const bullets1 = get('bullets1');
+      const skills   = get('skills');
+      const education= get('education');
+
+      addText(name, { size: 22, style: 'bold', color: [10, 26, 51], after: 1, lineHeight: 9 });
+      if (title) addText(title.toUpperCase(), { size: 9, color: [11, 122, 85], after: 3, lineHeight: 5 });
+      const contactParts = [email, phone, location].filter(Boolean);
+      if (contactParts.length) {
+        addText(contactParts.join('  ·  '), { size: 9, color: [110, 120, 140], after: 4, lineHeight: 4.5 });
+      }
+      addDivider();
+
+      if (summary) {
+        addSectionHeader('Summary');
+        addText(summary, { size: 10, color: [50, 60, 80], lineHeight: 5, after: 4 });
+      }
+
+      if (role1 || company1 || bullets1) {
+        addSectionHeader('Experience');
+        if (role1 || dates1) {
+          const head = (role1 || '') + (dates1 ? '   ' + dates1 : '');
+          addText(head, { size: 11, style: 'bold', color: [10, 26, 51], lineHeight: 5.5, after: 1 });
+        }
+        if (company1) {
+          addText(company1, { size: 10, color: [80, 90, 110], style: 'italic', lineHeight: 4.5, after: 2 });
+        }
+        if (bullets1) {
+          const bullets = bullets1.split('\n').map(function (b) { return b.trim(); }).filter(Boolean);
+          for (const b of bullets) {
+            addText('•  ' + b, { size: 10, color: [50, 60, 80], lineHeight: 5, after: 1 });
+          }
+          y += 2;
+        }
+      }
+
+      if (state.parsed && state.parsed.experiences && state.parsed.experiences.length > 1) {
+        for (let i = 1; i < state.parsed.experiences.length; i++) {
+          const exp = state.parsed.experiences[i];
+          if (!exp) continue;
+          const head = (exp.role || '') + (exp.dates ? '   ' + exp.dates : '');
+          if (head.trim()) addText(head, { size: 11, style: 'bold', color: [10, 26, 51], lineHeight: 5.5, after: 1 });
+          if (exp.company) addText(exp.company, { size: 10, color: [80, 90, 110], style: 'italic', lineHeight: 4.5, after: 2 });
+          if (exp.bullets && exp.bullets.length) {
+            for (const b of exp.bullets) {
+              addText('•  ' + b, { size: 10, color: [50, 60, 80], lineHeight: 5, after: 1 });
+            }
+            y += 2;
+          }
+        }
+      }
+
+      if (skills) {
+        addSectionHeader('Skills');
+        addText(skills, { size: 10, color: [50, 60, 80], lineHeight: 5, after: 4 });
+      }
+
+      if (education) {
+        addSectionHeader('Education');
+        addText(education, { size: 10, color: [50, 60, 80], lineHeight: 5, after: 4 });
+      }
+
+      doc.save(filename || 'resume.pdf');
+      return true;
+    }
+
+    function downloadCoverAsPdfDirect(filename) {
+      const jsPDF = _getJsPDFCtor();
+      if (!jsPDF) return null;
+
+      const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 22;
+      const contentWidth = pageWidth - margin * 2;
+      let y = margin;
+
+      function addText(text, opts) {
+        opts = opts || {};
+        const size = opts.size || 11;
+        const style = opts.style || 'normal';
+        const color = opts.color || [40, 50, 70];
+        const lineHeight = opts.lineHeight || size * 0.5;
+        const after = opts.after || 2;
+        doc.setFont(opts.font || 'helvetica', style);
+        doc.setFontSize(size);
+        doc.setTextColor(color[0], color[1], color[2]);
+        const lines = doc.splitTextToSize(text || '', contentWidth);
+        for (const line of lines) {
+          if (y + lineHeight > pageHeight - margin) { doc.addPage(); y = margin; }
+          doc.text(line, margin, y);
+          y += lineHeight;
+        }
+        y += after;
+      }
+
+      const out = byId('coverOutput');
+      if (!out) return null;
+      const paragraphs = (out.innerText || '').split(/\n\s*\n/).map(function (p) { return p.trim(); }).filter(Boolean);
+      for (const p of paragraphs) {
+        addText(p, { size: 11, lineHeight: 6, after: 4 });
+      }
+
+      doc.save(filename || 'cover-letter.pdf');
+      return true;
+    }
+
     async function downloadAsPdf(elementId, filename, triggerBtn) {
-      // ─── 1. TARGET THE CORRECT ELEMENT ─────────
       const el = byId(elementId);
       if (!el) {
         showToast('Could not find the preview to export');
         return;
       }
-
-      // ─── 5. PREVENT EMPTY EXPORT ───────────────
       const text = (el.innerText || el.textContent || '').trim();
-      const isEmptyState = el.dataset.empty === '1';
-      if (isEmptyState || text.length < 20) {
+      if (el.dataset.empty === '1' || text.length < 20) {
         showResultModal('Nothing to export', 'PDF download',
           '<p>Your preview is empty. Fill in the form on the left, or upload a resume to auto-fill it, then try again.</p>');
         return;
       }
 
-      // ─── 7. LOADING STATE ──────────────────────
       let originalBtnHtml = null;
       if (triggerBtn) {
         originalBtnHtml = triggerBtn.innerHTML;
@@ -1398,118 +1571,26 @@
       }
       showToast('Generating PDF…');
 
-      if (typeof window.html2pdf === 'undefined') {
-        if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.innerHTML = originalBtnHtml; }
-        showResultModal('PDF library not loaded', 'PDF download',
-          '<p>The PDF generator hasn\'t finished loading yet. Wait a moment and try again — if it persists, check your internet connection.</p>');
-        return;
-      }
-
-      let renderHost = null;
-
       try {
-        // Wait for fonts and layout to settle
         if (document.fonts && document.fonts.ready) {
           try { await document.fonts.ready; } catch (e) {}
         }
-        await new Promise(function (r) {
-          requestAnimationFrame(function () {
-            requestAnimationFrame(function () { setTimeout(r, 80); });
-          });
-        });
+        await new Promise(function (r) { requestAnimationFrame(function () { setTimeout(r, 50); }); });
 
-        // ─── ROOT-CAUSE FIX: clone into a standalone container ─
-        // The previous capture failed because the element lives inside a CSS
-        // grid (form on left, preview on right). html2canvas inherits the
-        // parent grid layout and renders content shifted to the right column,
-        // so most of it falls off the captured page. The fix is to clone the
-        // element into a fresh, simple, full-width container with no parent
-        // grid influences — then capture that.
-        renderHost = document.createElement('div');
-        renderHost.id = elementId + '-pdf-host';
-        // CRITICAL: opacity:0 in some browsers causes child text to skip
-        // painting. We use visibility:hidden + clip-path:none to ensure
-        // text actually renders during capture.
-        renderHost.style.cssText = [
-          'position:fixed',
-          'top:0',
-          'left:0',
-          'width:794px',
-          'height:auto',
-          'background:#ffffff',
-          'z-index:-1',
-          'pointer-events:none',
-          'overflow:visible',
-          'display:block',
-          'margin:0',
-          'padding:0',
-          'box-sizing:border-box',
-          'transform:translateY(-200vh)' // moves it off-screen vertically; html2canvas computes from element coords, not viewport
-        ].join(';');
+        let success = false;
+        if (elementId === 'resumePreview') {
+          success = downloadResumeAsPdfDirect(filename);
+        } else if (elementId === 'coverOutput') {
+          success = downloadCoverAsPdfDirect(filename);
+        }
 
-        const clone = el.cloneNode(true);
-        clone.id = elementId + '-clone';
-        // Reset all inherited layout that could shift the content
-        clone.style.cssText = [
-          'position:static',
-          'top:auto',
-          'left:auto',
-          'right:auto',
-          'bottom:auto',
-          'transform:none',
-          'box-shadow:none',
-          'margin:0',
-          'width:794px',
-          'max-width:794px',
-          'min-width:794px',
-          'background:#ffffff',
-          'display:block',
-          'visibility:visible',
-          'opacity:1',
-          'padding:32px 40px',
-          'box-sizing:border-box',
-          'overflow:visible'
-        ].join(';');
+        if (success) {
+          showToast('Saved ' + (filename || 'document.pdf'));
+          addActivity('download', filename || 'document.pdf');
+          return;
+        }
 
-        renderHost.appendChild(clone);
-        document.body.appendChild(renderHost);
-
-        // One more frame for the clone to lay out inside the host
-        await new Promise(function (r) { requestAnimationFrame(function () { setTimeout(r, 80); }); });
-
-        // ─── EXPORT CONFIG ─────────────────────
-        // Letter page is 8.5" wide = 216mm. With 10mm margins on each side
-        // we have 196mm of content area. The clone is 794px wide, which
-        // at 96dpi is 8.27in (210mm). So we use A4 sizing to match cleanly,
-        // OR use jsPDF's automatic image fitting.
-        //
-        // Simplest reliable path: let html2pdf size the canvas to fit the
-        // page automatically. We do that by NOT specifying width/height in
-        // html2canvas options — let it use the element's natural size.
-        const opts = {
-          margin: 10,
-          filename: filename || 'resume.pdf',
-          image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            logging: false,
-            scrollX: 0,
-            scrollY: 0
-          },
-          jsPDF: {
-            unit: 'mm',
-            format: 'a4',
-            orientation: 'portrait',
-            compress: true
-          },
-          pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
-        };
-
-        await window.html2pdf().set(opts).from(clone).save();
-        showToast('Saved ' + opts.filename);
-        addActivity('download', opts.filename);
+        throw new Error('PDF library not available. Refresh the page and try again.');
 
       } catch (err) {
         console.error('PDF export failed:', err);
@@ -1530,11 +1611,6 @@
         }, 100);
 
       } finally {
-        // Cleanup the offscreen host
-        if (renderHost && renderHost.parentNode) {
-          renderHost.parentNode.removeChild(renderHost);
-        }
-        // Restore button state
         if (triggerBtn) {
           triggerBtn.disabled = false;
           if (originalBtnHtml !== null) triggerBtn.innerHTML = originalBtnHtml;
@@ -1542,7 +1618,7 @@
       }
     }
 
-    // ─── Helper kept for backwards compat (no longer used in PDF flow) ──
+
     function isCanvasBlank(canvas) {
       try {
         const ctx = canvas.getContext('2d');
