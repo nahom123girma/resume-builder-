@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Folio — Sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="folio.css">
+<style>
+  .auth-wrap {
+    min-height: 100vh;
+    display: grid; place-items: center;
+    padding: 40px 20px;
+  }
+  .auth-card {
+    width: 100%;
+    max-width: 440px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 16px;
+    padding: 40px 36px;
+    position: relative;
+    z-index: 2;
+    box-shadow: var(--shadow);
+  }
+  .auth-logo {
+    display: flex; align-items: baseline; gap: 6px;
+    font-family: 'Fraunces', serif;
+    font-size: 24px; font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-bottom: 30px;
+  }
+  .auth-logo .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--amber);
+    align-self: center;
+    margin-left: 2px;
+  }
+  .auth-card h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 400;
+    font-size: 30px;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+    margin-bottom: 8px;
+  }
+  .auth-card h1 em { font-style: italic; color: var(--amber); }
+  .auth-card .lede {
+    color: var(--ink-soft);
+    font-size: 14.5px;
+    margin-bottom: 24px;
+  }
+  .tabs {
+    display: flex;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: 3px;
+    margin-bottom: 22px;
+    background: var(--cream-2);
+  }
+  .tabs button {
+    flex: 1;
+    padding: 8px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-mute);
+    transition: background .2s, color .2s;
+  }
+  .tabs button.active { background: var(--ink); color: var(--cream); }
+
+  .auth-foot {
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--ink-mute);
+    text-align: center;
+  }
+  .auth-foot a { color: var(--amber); border-bottom: 1px solid var(--amber); }
+  .err {
+    background: rgba(142,51,32,.08);
+    border: 1px solid rgba(142,51,32,.25);
+    color: var(--brick);
+    padding: 9px 12px;
+    border-radius: 7px;
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+  .full-btn { width: 100%; justify-content: center; padding: 13px; }
+  .back-link {
+    display: inline-block;
+    margin-top: 30px;
+    font-size: 12px;
+    color: var(--ink-mute);
+    font-family: 'IBM Plex Mono', monospace;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .back-link:hover { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<div class="auth-wrap">
+  <div class="auth-card">
+    <a href="index.html" class="auth-logo">Folio<span class="dot"></span></a>
+
+    <div class="tabs" role="tablist">
+      <button id="tab-login" class="active" type="button">Log in</button>
+      <button id="tab-signup" type="button">Sign up</button>
+    </div>
+
+    <h1 id="auth-heading">Welcome <em>back</em>.</h1>
+    <p class="lede" id="auth-lede">Log in to pick up where you left off.</p>
+
+    <div id="err" class="err hidden"></div>
+
+    <form id="auth-form">
+      <div class="field" id="name-field" style="display:none;">
+        <label for="name">Name</label>
+        <input id="name" name="name" type="text" autocomplete="name" />
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required autocomplete="email" />
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required minlength="6" autocomplete="current-password" />
+      </div>
+
+      <button type="submit" id="submit" class="btn btn-amber full-btn">Log in</button>
+    </form>
+
+    <div class="auth-foot" id="auth-foot">
+      No account? <a href="#" id="switch-link">Sign up free</a>
+    </div>
+
+    <a href="index.html" class="back-link">← back to home</a>
+  </div>
+</div>
+
+<script src="folio.js"></script>
+<script>
+  // Determine starting mode from ?mode=signup or ?mode=login
+  const params = new URLSearchParams(location.search);
+  let mode = params.get('mode') === 'signup' ? 'signup' : 'login';
+
+  const tabLogin = document.getElementById('tab-login');
+  const tabSignup = document.getElementById('tab-signup');
+  const heading = document.getElementById('auth-heading');
+  const lede = document.getElementById('auth-lede');
+  const submit = document.getElementById('submit');
+  const nameField = document.getElementById('name-field');
+  const passwordInput = document.getElementById('password');
+  const switchLink = document.getElementById('switch-link');
+  const authFoot = document.getElementById('auth-foot');
+  const errEl = document.getElementById('err');
+
+  function showError(msg) {
+    errEl.textContent = msg;
+    errEl.classList.remove('hidden');
+  }
+  function clearError() { errEl.classList.add('hidden'); }
+
+  function applyMode() {
+    clearError();
+    if (mode === 'signup') {
+      tabSignup.classList.add('active');
+      tabLogin.classList.remove('active');
+      heading.innerHTML = 'Create your <em>account</em>.';
+      lede.textContent = 'Free forever for the basics. We\'ll save your work as you go.';
+      submit.textContent = 'Create account';
+      nameField.style.display = '';
+      passwordInput.setAttribute('autocomplete', 'new-password');
+      authFoot.innerHTML = 'Already have an account? <a href="#" id="switch-link">Log in</a>';
+    } else {
+      tabLogin.classList.add('active');
+      tabSignup.classList.remove('active');
+      heading.innerHTML = 'Welcome <em>back</em>.';
+      lede.textContent = 'Log in to pick up where you left off.';
+      submit.textContent = 'Log in';
+      nameField.style.display = 'none';
+      passwordInput.setAttribute('autocomplete', 'current-password');
+      authFoot.innerHTML = 'No account? <a href="#" id="switch-link">Sign up free</a>';
+    }
+    document.getElementById('switch-link').addEventListener('click', e => {
+      e.preventDefault();
+      mode = (mode === 'signup') ? 'login' : 'signup';
+      applyMode();
+    });
+  }
+
+  tabLogin.addEventListener('click', () => { mode = 'login'; applyMode(); });
+  tabSignup.addEventListener('click', () => { mode = 'signup'; applyMode(); });
+
+  applyMode();
+
+  // Submit
+  document.getElementById('auth-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearError();
+    submit.disabled = true;
+    submit.textContent = mode === 'signup' ? 'Creating…' : 'Logging in…';
+    const fd = new FormData(e.currentTarget);
+    const email = fd.get('email');
+    const password = fd.get('password');
+    const name = fd.get('name');
+
+    try {
+      if (mode === 'signup') {
+        await signup({ name, email, password });
+      } else {
+        await login({ email, password });
+      }
+
+      // If they came from the builder with unsaved work, save it under their account
+      const draft = getDraft();
+      if (draft) {
+        saveResume(draft);
+        clearDraft();
+      }
+
+      // Redirect: ?next=<url> if present, else dashboard if they have any resumes,
+      // else builder.
+      const next = params.get('next');
+      if (next) {
+        location.href = decodeURIComponent(next);
+      } else if (listResumes().length > 0) {
+        location.href = 'dashboard.html';
+      } else {
+        location.href = 'builder.html';
+      }
+    } catch (err) {
+      showError(err.message);
+      submit.disabled = false;
+      submit.textContent = mode === 'signup' ? 'Create account' : 'Log in';
+    }
+  });
+
+  // If already logged in, send straight to dashboard
+  if (isLoggedIn()) {
+    location.replace('dashboard.html');
+  }
+</script>
+</body>
+</html>

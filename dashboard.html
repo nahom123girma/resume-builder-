@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Folio — My résumés</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="folio.css">
+<link rel="stylesheet" href="templates.css">
+<style>
+  .head {
+    margin: 50px 0 36px;
+    padding-bottom: 26px;
+    border-bottom: 1px solid var(--rule);
+    display: flex; justify-content: space-between; align-items: flex-end;
+    flex-wrap: wrap; gap: 18px;
+  }
+  .head .eyebrow { margin-bottom: 14px; }
+  .head h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 400;
+    font-size: clamp(36px, 5vw, 52px);
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+  }
+  .head h1 em { font-style: italic; color: var(--amber); }
+  .head .greeting { color: var(--ink-soft); font-size: 15px; margin-top: 6px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 22px;
+    margin-bottom: 60px;
+  }
+  .resume-card {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 18px;
+    transition: border-color .2s, transform .25s, box-shadow .25s;
+    position: relative;
+  }
+  .resume-card:hover { border-color: var(--ink); transform: translateY(-2px); box-shadow: var(--shadow); }
+  .thumb-wrap {
+    aspect-ratio: 8.5/11;
+    background: var(--cream-2);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    margin-bottom: 14px;
+    overflow: hidden;
+    position: relative;
+    cursor: pointer;
+  }
+  .thumb-wrap .tpl {
+    width: 100%;
+    transform: scale(0.42);
+    transform-origin: top left;
+    pointer-events: none;
+    box-shadow: none !important;
+  }
+  .thumb-wrap::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(to bottom, transparent 60%, rgba(244,237,224,.65));
+    pointer-events: none;
+  }
+  .resume-card .meta {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .resume-card h3 {
+    font-family: 'Fraunces', serif;
+    font-size: 17px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .resume-card .tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--ink-mute);
+  }
+  .resume-card .updated {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10.5px;
+    color: var(--ink-mute);
+    margin-bottom: 12px;
+  }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .actions .btn { padding: 6px 12px; font-size: 12px; }
+
+  .empty {
+    text-align: center;
+    padding: 80px 30px;
+    background: var(--paper);
+    border: 1px dashed var(--rule);
+    border-radius: 14px;
+  }
+  .empty .num {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 56px;
+    color: var(--amber);
+    line-height: 1;
+    margin-bottom: 12px;
+  }
+  .empty h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 400;
+    font-size: 28px;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+  .empty p { color: var(--ink-soft); max-width: 380px; margin: 0 auto 20px; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="container nav-inner">
+    <a href="index.html" class="logo">Folio<span class="dot"></span></a>
+    <div class="nav-links">
+      <a href="dashboard.html">My résumés</a>
+      <a href="builder.html">Templates</a>
+    </div>
+    <div class="nav-cta"></div>
+  </div>
+</nav>
+
+<main class="container">
+  <div class="head">
+    <div>
+      <div class="eyebrow">Studio</div>
+      <h1>Your <em>résumés</em>.</h1>
+      <div class="greeting" id="greeting"></div>
+    </div>
+    <a href="builder.html" class="btn btn-amber">+ New résumé</a>
+  </div>
+
+  <div id="content"></div>
+</main>
+
+<footer class="foot">
+  <div class="container">
+    <div class="foot-bottom">
+      <span>© 2026 Folio Studio Inc.</span>
+      <span class="mono">v1.0</span>
+    </div>
+  </div>
+</footer>
+
+<script src="folio.js"></script>
+<script>
+  // Require auth
+  if (!isLoggedIn()) {
+    location.replace('auth.html?mode=login&next=' + encodeURIComponent('dashboard.html'));
+  }
+
+  const user = getCurrentUser();
+  document.getElementById('greeting').innerHTML = user
+    ? `Welcome back, <em class="italic" style="color:var(--amber)">${user.name || user.email.split('@')[0]}</em>. ${listResumes().length === 0 ? "Let's start your first one." : ""}`
+    : '';
+
+  function fmtAgo(ts) {
+    if (!ts) return 'just now';
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return days + 'd ago';
+    return new Date(ts).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  }
+
+  function render() {
+    const resumes = listResumes();
+    const content = document.getElementById('content');
+    if (resumes.length === 0) {
+      content.innerHTML = `
+        <div class="empty">
+          <div class="num">i.</div>
+          <h2>No résumés yet.</h2>
+          <p>Pick a template and we'll save your progress automatically as you edit.</p>
+          <a href="builder.html" class="btn btn-amber">Choose a template</a>
+        </div>`;
+      return;
+    }
+    content.innerHTML = `<div class="grid">${resumes.map(r => `
+      <div class="resume-card" data-id="${r.id}">
+        <div class="thumb-wrap" data-edit-id="${r.id}">
+          ${TEMPLATES[r.templateId]?.render(r.data) || ''}
+        </div>
+        <div class="meta">
+          <h3>${escape(r.title || 'Untitled résumé')}</h3>
+          <span class="tag">${TEMPLATES[r.templateId]?.tag || r.templateId.toUpperCase()}</span>
+        </div>
+        <div class="updated">Updated ${fmtAgo(r.updatedAt)}</div>
+        <div class="actions">
+          <button class="btn btn-outline" data-action="edit" data-id="${r.id}">Edit</button>
+          <button class="btn btn-outline" data-action="duplicate" data-id="${r.id}">Duplicate</button>
+          <button class="btn btn-danger" data-action="delete" data-id="${r.id}">Delete</button>
+        </div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  render();
+
+  // Action handlers (event delegation)
+  document.getElementById('content').addEventListener('click', (e) => {
+    const editTarget = e.target.closest('[data-edit-id]');
+    if (editTarget) {
+      location.href = 'builder.html?id=' + editTarget.dataset.editId;
+      return;
+    }
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    const action = btn.dataset.action;
+
+    if (action === 'edit') {
+      location.href = 'builder.html?id=' + id;
+    } else if (action === 'duplicate') {
+      const original = getResume(id);
+      if (!original) return;
+      const copy = {
+        ...original,
+        id: uid(),
+        title: original.title + ' (copy)',
+        createdAt: undefined,
+        updatedAt: undefined,
+      };
+      saveResume(copy);
+      toast('Duplicated.');
+      render();
+    } else if (action === 'delete') {
+      if (!confirm('Delete this résumé? This cannot be undone.')) return;
+      deleteResume(id);
+      toast('Deleted.');
+      render();
+    }
+  });
+</script>
+</body>
+</html>

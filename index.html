@@ -1,0 +1,1465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Folio — Job-winning résumé builder</title>
+<meta name="description" content="Build a job-winning résumé 2× as fast. Choose from typeset templates, generate content with AI, and apply in minutes." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,500&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&family=Caveat:wght@400;600&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --cream: #F4EDE0;
+  --cream-2: #EFE6D4;
+  --paper: #FAF6EC;
+  --paper-2: #F8F2E4;
+  --ink: #1B1916;
+  --ink-soft: #3A352D;
+  --ink-mute: #6E6557;
+  --rule: #D9CFB8;
+  --rule-soft: #E5DCC4;
+  --amber: #C44A1A;
+  --amber-soft: rgba(196, 74, 26, 0.10);
+  --amber-deep: #9F3A13;
+  --moss: #3D5240;
+  --moss-soft: rgba(61, 82, 64, 0.10);
+  --clay: #A86B3D;
+  --clay-soft: rgba(168, 107, 61, 0.10);
+  --shadow: 0 1px 0 rgba(27,25,22,.04), 0 12px 30px -10px rgba(27,25,22,.12);
+  --shadow-lg: 0 30px 80px -30px rgba(27,25,22,.28);
+  --maxw: 1240px;
+  --pad: clamp(20px, 4vw, 56px);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  background: var(--cream);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: .35;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.10 0 0 0 0 0.09 0 0 0 0 0.08 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+::selection { background: var(--amber); color: var(--paper); }
+
+a { color: inherit; text-decoration: none; }
+button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+img { max-width: 100%; display: block; }
+
+.serif { font-family: 'Fraunces', Georgia, serif; }
+.mono { font-family: 'IBM Plex Mono', monospace; letter-spacing: -0.01em; }
+
+.container {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 var(--pad);
+  position: relative;
+  z-index: 2;
+}
+
+/* ============ NAV ============ */
+.nav {
+  position: sticky; top: 0; z-index: 50;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  background: color-mix(in oklab, var(--cream) 78%, transparent);
+  border-bottom: 1px solid transparent;
+  transition: border-color .3s ease;
+}
+.nav.scrolled { border-bottom-color: var(--rule); }
+.nav-inner {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 0;
+}
+.logo {
+  display: flex; align-items: baseline; gap: 6px;
+  font-family: 'Fraunces', serif;
+  font-size: 26px; font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.logo .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--amber);
+  display: inline-block;
+  align-self: center;
+  margin-left: 2px;
+}
+.nav-links {
+  display: flex; gap: 30px;
+  font-size: 14px; font-weight: 400;
+  color: var(--ink-soft);
+}
+.nav-links a {
+  position: relative;
+  padding: 4px 0;
+  transition: color .2s;
+}
+.nav-links a:hover { color: var(--ink); }
+.nav-links a::after {
+  content: ""; position: absolute; left: 0; right: 100%; bottom: 0;
+  height: 1px; background: var(--ink);
+  transition: right .3s ease;
+}
+.nav-links a:hover::after { right: 0; }
+
+.nav-cta { display: flex; align-items: center; gap: 14px; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 11px 22px;
+  border-radius: 999px;
+  font-size: 14px; font-weight: 500;
+  transition: transform .2s ease, box-shadow .25s ease, background .2s, color .2s;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.btn-ghost { color: var(--ink-soft); padding: 11px 4px; }
+.btn-ghost:hover { color: var(--ink); }
+.btn-primary { background: var(--ink); color: var(--cream); }
+.btn-primary:hover { background: var(--amber); transform: translateY(-1px); box-shadow: 0 8px 24px -8px rgba(196,74,26,.5); }
+.btn-amber { background: var(--amber); color: var(--paper); }
+.btn-amber:hover { background: var(--amber-deep); transform: translateY(-1px); box-shadow: 0 8px 24px -8px rgba(196,74,26,.5); }
+.btn-outline {
+  border-color: var(--ink); color: var(--ink);
+  background: transparent;
+}
+.btn-outline:hover { background: var(--ink); color: var(--cream); }
+
+@media (max-width: 900px) {
+  .nav-links { display: none; }
+  .nav-cta .btn-ghost { display: none; }
+}
+
+/* ============ HERO ============ */
+.hero {
+  padding: clamp(50px, 7vw, 90px) 0 clamp(60px, 8vw, 100px);
+  text-align: center;
+}
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-mute);
+  margin-bottom: 26px;
+}
+.eyebrow::before, .eyebrow::after {
+  content: ""; display: inline-block;
+  width: 24px; height: 1px;
+  background: var(--ink-mute);
+}
+.hero h1 {
+  font-family: 'Fraunces', serif;
+  font-weight: 400;
+  font-size: clamp(44px, 6.5vw, 84px);
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  color: var(--ink);
+  margin: 0 auto 24px;
+  max-width: 880px;
+}
+.hero h1 em {
+  font-style: italic;
+  color: var(--amber);
+  font-weight: 400;
+}
+.hero-lede {
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  max-width: 560px;
+  margin: 0 auto 36px;
+}
+.hero-lede sup {
+  font-size: 10px;
+  vertical-align: super;
+  color: var(--amber);
+  font-weight: 600;
+}
+.hero-cta {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  justify-content: center;
+  margin-bottom: 56px;
+}
+.hero-cta .btn { padding: 14px 26px; font-size: 14.5px; }
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  max-width: 1100px;
+  margin: 0 auto;
+  text-align: left;
+  position: relative;
+}
+.step-card {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 22px 22px 0;
+  position: relative;
+  overflow: hidden;
+  transition: transform .35s cubic-bezier(.2,.8,.2,1), box-shadow .35s, border-color .25s;
+}
+.step-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow);
+  border-color: var(--ink);
+}
+.step-tag {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 14px;
+}
+.step-tag .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block;
+}
+.step-card[data-step="1"] .step-tag .dot { background: var(--ink); }
+.step-card[data-step="2"] .step-tag .dot { background: var(--amber); }
+.step-card[data-step="3"] .step-tag .dot { background: var(--moss); }
+
+.step-title {
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin-bottom: 18px;
+  min-height: 50px;
+}
+.step-title em { font-style: italic; color: var(--amber); }
+
+.step-mock {
+  position: relative;
+  height: 200px;
+  margin-left: -22px;
+  margin-right: -22px;
+  margin-bottom: -1px;
+  overflow: hidden;
+  background: var(--cream-2);
+  border-top: 1px solid var(--rule);
+}
+
+.mock-template {
+  position: absolute;
+  top: 18px; left: 50%; transform: translateX(-50%);
+  width: 150px;
+  aspect-ratio: 8.5/11;
+  background: white;
+  border-radius: 4px;
+  padding: 14px 12px;
+  font-family: 'Fraunces', serif;
+  box-shadow: var(--shadow-lg);
+}
+.mock-template .mt-name { font-size: 11px; font-weight: 600; letter-spacing: -0.01em; }
+.mock-template .mt-role {
+  font-size: 6.5px;
+  color: var(--ink-mute);
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: 1px;
+  margin-bottom: 7px;
+}
+.mock-template .mt-rule { height: 0.5px; background: var(--ink); margin-bottom: 6px; }
+.mock-template .mt-h {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin: 5px 0 3px;
+  font-weight: 500;
+}
+.mock-template .mt-line {
+  height: 2px; background: var(--cream-2);
+  border-radius: 1px;
+  margin-bottom: 2.5px;
+}
+.mock-template .mt-line.s { width: 60%; }
+.mock-template .mt-line.m { width: 85%; }
+
+.mock-badge {
+  position: absolute;
+  bottom: 18px; right: 14px;
+  background: var(--ink); color: var(--paper);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.mock-ai {
+  position: absolute;
+  inset: 18px 14px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 14px;
+  font-size: 11px;
+  display: flex; flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+.mock-ai .ai-tag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--amber);
+  font-weight: 500;
+}
+.mock-ai .ai-tag::before { content: "✦ "; }
+.mock-ai .ai-line {
+  font-family: 'Fraunces', serif;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+.mock-ai .ai-suggestion {
+  background: var(--amber-soft);
+  border: 1px solid var(--amber);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: 'Fraunces', serif;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink);
+  font-style: italic;
+  position: relative;
+}
+.mock-ai .ai-suggestion::before {
+  content: "✦";
+  position: absolute;
+  top: 8px; right: 8px;
+  color: var(--amber);
+  font-size: 10px;
+}
+.mock-ai .typing {
+  height: 4px; width: 30%;
+  background: var(--amber);
+  border-radius: 2px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.mock-final {
+  position: absolute;
+  top: 14px; left: 50%; transform: translateX(-50%) rotate(-3deg);
+  width: 130px;
+  aspect-ratio: 8.5/11;
+  background: white;
+  border-radius: 4px;
+  padding: 12px 10px;
+  box-shadow: var(--shadow-lg);
+  font-family: 'Fraunces', serif;
+}
+.mock-final .mf-name { font-size: 10px; font-weight: 600; }
+.mock-final .mf-role {
+  font-size: 5.5px;
+  color: var(--ink-mute);
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.mock-final .mf-rule { height: 0.5px; background: var(--ink); margin-bottom: 5px; }
+.mock-final .mf-line { height: 1.5px; background: var(--cream-2); margin-bottom: 2px; border-radius: 1px; }
+.mock-final .mf-line.s { width: 60%; }
+.mock-final .mf-h {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 4px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--moss);
+  margin: 4px 0 2px;
+  font-weight: 500;
+}
+
+.mock-pill {
+  position: absolute;
+  bottom: 26px; right: 18px;
+  background: var(--moss); color: var(--paper);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-weight: 500;
+  display: flex; align-items: center; gap: 5px;
+  animation: bob 3s ease-in-out infinite;
+}
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@media (max-width: 900px) {
+  .steps { grid-template-columns: 1fr; }
+}
+
+/* ============ TRUST BAR ============ */
+.trust {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: var(--cream-2);
+  padding: 24px 0;
+}
+.trust-inner {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 40px;
+  flex-wrap: wrap;
+}
+.rating {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.rating-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--ink);
+}
+.stars {
+  display: inline-flex; gap: 1px;
+  color: var(--amber);
+  font-size: 16px;
+  letter-spacing: 0;
+}
+.rating em {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  color: var(--ink);
+}
+
+.hired-by {
+  display: flex; align-items: center; gap: 30px;
+  font-size: 13px;
+  color: var(--ink-mute);
+  flex-wrap: wrap;
+}
+.hired-by .label {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 14px;
+}
+.logos {
+  display: flex; align-items: center; gap: 26px;
+  flex-wrap: wrap;
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  color: var(--ink-soft);
+}
+.logos span { opacity: 0.75; transition: opacity .2s; }
+.logos span:hover { opacity: 1; color: var(--ink); }
+
+@media (max-width: 800px) {
+  .trust-inner { justify-content: center; flex-direction: column; }
+}
+
+/* ============ SECTION ============ */
+.section { padding: clamp(70px, 9vw, 110px) 0; }
+.section-head {
+  text-align: center;
+  margin-bottom: 50px;
+}
+.section-head h2 {
+  font-family: 'Fraunces', serif;
+  font-weight: 400;
+  font-size: clamp(36px, 5vw, 56px);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  margin-bottom: 14px;
+}
+.section-head h2 em { font-style: italic; color: var(--amber); }
+.section-head p {
+  color: var(--ink-soft);
+  font-size: 16px;
+  max-width: 540px;
+  margin: 0 auto;
+}
+
+/* ============ TEMPLATES ============ */
+.templates-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 22px;
+  margin-bottom: 30px;
+}
+.template { cursor: pointer; transition: transform .4s cubic-bezier(.2,.8,.2,1); }
+.template:hover { transform: translateY(-6px); }
+.template-preview {
+  aspect-ratio: 8.5/11;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 18px 14px;
+  font-size: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  transition: box-shadow .4s;
+  position: relative;
+}
+.template:hover .template-preview { box-shadow: var(--shadow-lg); }
+.template-meta {
+  margin-top: 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.template-name-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.template-name-row .name {
+  font-family: 'Fraunces', serif;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.template-name-row .tag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.swatches { display: flex; gap: 5px; }
+.swatches span {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  cursor: pointer;
+  transition: transform .15s;
+}
+.swatches span:hover { transform: scale(1.2); }
+.swatches .active { outline: 1px solid var(--ink); outline-offset: 2px; }
+
+.tpl-classic .tname { font-family: 'Fraunces', serif; font-size: 14px; font-weight: 500; margin-bottom: 1px; }
+.tpl-classic .trole { font-size: 6.5px; color: var(--ink-mute); margin-bottom: 8px; font-family: 'IBM Plex Mono', monospace; letter-spacing: 0.06em; text-transform: uppercase; }
+.tpl-classic .trule { height: 0.5px; background: var(--ink); margin-bottom: 8px; }
+.tpl-classic .tline { height: 3px; background: var(--cream-2); margin-bottom: 3px; border-radius: 1px; }
+.tpl-classic .tline.s { width: 60%; }
+.tpl-classic .tline.m { width: 85%; }
+.tpl-classic .th { font-family: 'IBM Plex Mono', monospace; font-size: 6px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--amber); margin: 8px 0 4px; }
+
+.tpl-modern { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.tpl-modern .left { background: var(--amber); padding: 6px; margin: -18px 0 8px -14px; width: 35%; height: 100%; position: absolute; }
+.tpl-modern .tname { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.tpl-modern .trole { font-size: 6px; opacity: .7; margin-bottom: 8px; }
+.tpl-modern .tline { height: 3px; background: rgba(255,255,255,.2); margin-bottom: 3px; border-radius: 1px; }
+.tpl-modern .tline.s { width: 60%; }
+.tpl-modern .tline.m { width: 80%; }
+
+.tpl-editorial { background: var(--cream-2); }
+.tpl-editorial .tname { font-family: 'Fraunces', serif; font-style: italic; font-size: 22px; font-weight: 400; line-height: 1; letter-spacing: -0.03em; margin-bottom: 6px; }
+.tpl-editorial .trole { font-size: 6px; color: var(--amber); margin-bottom: 10px; letter-spacing: 0.16em; text-transform: uppercase; font-family: 'IBM Plex Mono', monospace; }
+.tpl-editorial .tcol { display: grid; grid-template-columns: 1fr 1.3fr; gap: 6px; }
+.tpl-editorial .tline { height: 2.5px; background: var(--rule); margin-bottom: 3px; border-radius: 1px; }
+.tpl-editorial .th { font-family: 'IBM Plex Mono', monospace; font-size: 5.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink); margin-bottom: 4px; font-weight: 500; }
+
+.tpl-minimal { background: var(--paper); }
+.tpl-minimal .tname { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 500; letter-spacing: -0.01em; margin-bottom: 1px; }
+.tpl-minimal .trole { font-size: 6px; color: var(--ink-mute); margin-bottom: 16px; }
+.tpl-minimal .tline { height: 2.5px; background: var(--cream-2); margin-bottom: 4px; border-radius: 1px; }
+.tpl-minimal .th { font-size: 7px; font-weight: 500; margin: 10px 0 5px; color: var(--ink); }
+
+@media (max-width: 800px) { .templates-row { grid-template-columns: repeat(2, 1fr); } }
+
+.view-all { display: flex; justify-content: center; }
+.view-all a {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 17px;
+  color: var(--amber);
+  border-bottom: 1px solid var(--amber);
+  padding-bottom: 2px;
+  transition: gap .2s;
+}
+.view-all a:hover { gap: 12px; }
+
+/* ============ RESULTS SECTION ============ */
+.results {
+  background: var(--paper-2);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: clamp(70px, 9vw, 110px) 0;
+  position: relative;
+}
+.results-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 30px;
+  align-items: center;
+  margin-bottom: 60px;
+  position: relative;
+}
+.results-head h2 {
+  font-family: 'Fraunces', serif;
+  font-weight: 400;
+  font-size: clamp(36px, 5.5vw, 64px);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  max-width: 580px;
+}
+.underline-word {
+  position: relative;
+  display: inline-block;
+}
+.underline-word::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0;
+  bottom: -8px;
+  height: 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'%3E%3Cpath d='M2 8 Q 30 2, 60 6 T 120 5 T 198 8' stroke='%23C44A1A' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+.arrow-cta {
+  position: relative;
+  display: flex; align-items: center; gap: 24px;
+}
+.arrow-svg {
+  width: 110px; height: 60px;
+  color: var(--ink);
+  transform: translateY(-12px);
+}
+.arrow-svg path {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  fill: none;
+  stroke-linecap: round;
+}
+
+@media (max-width: 800px) {
+  .results-head { grid-template-columns: 1fr; }
+  .arrow-svg { display: none; }
+}
+
+.benefits {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 40px;
+}
+.benefit { position: relative; }
+.benefit-num {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 38px;
+  font-weight: 400;
+  color: var(--amber);
+  line-height: 1;
+  margin-bottom: 14px;
+  display: block;
+}
+.benefit h3 {
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 22px;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin-bottom: 10px;
+}
+.benefit p {
+  color: var(--ink-soft);
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+@media (max-width: 800px) { .benefits { grid-template-columns: 1fr; gap: 30px; } }
+
+/* ============ FEATURES GRID ============ */
+.features { padding: clamp(70px, 9vw, 110px) 0; }
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+}
+.feature-card {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 26px 26px 0;
+  position: relative;
+  overflow: hidden;
+  transition: transform .35s cubic-bezier(.2,.8,.2,1), box-shadow .35s, border-color .25s;
+}
+.feature-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--ink);
+  box-shadow: var(--shadow);
+}
+.feature-num {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.feature-card h3 {
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 22px;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin-bottom: 8px;
+}
+.feature-card h3 em { font-style: italic; color: var(--amber); }
+.feature-card p {
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin-bottom: 22px;
+}
+.feature-mock {
+  position: relative;
+  height: 150px;
+  margin: 0 -26px;
+  background: var(--cream-2);
+  border-top: 1px solid var(--rule);
+  overflow: hidden;
+}
+
+@media (max-width: 1000px) { .features-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .features-grid { grid-template-columns: 1fr; } }
+
+.fm-templates {
+  display: flex; justify-content: center; align-items: flex-start;
+  gap: 8px;
+  padding-top: 16px;
+}
+.fm-templates .mini {
+  width: 60px;
+  aspect-ratio: 8.5/11;
+  background: white;
+  border-radius: 3px;
+  padding: 6px 5px;
+  box-shadow: var(--shadow);
+}
+.fm-templates .mini:nth-child(1) { transform: rotate(-6deg); }
+.fm-templates .mini:nth-child(3) { transform: rotate(6deg); }
+.fm-templates .mini-name {
+  font-family: 'Fraunces', serif;
+  font-size: 5.5px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.fm-templates .mini-line {
+  height: 1.5px;
+  background: var(--cream-2);
+  border-radius: 1px;
+  margin-bottom: 1.5px;
+}
+.fm-templates .mini-line.s { width: 60%; }
+
+.fm-ai {
+  padding: 14px 18px;
+  display: flex; flex-direction: column;
+  gap: 7px;
+}
+.fm-ai .check-row {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--ink-soft);
+  font-family: 'Fraunces', serif;
+}
+.fm-ai .check-row.done { color: var(--moss); }
+.fm-ai .check-row.done::before { content: "✓"; color: var(--moss); font-weight: 600; }
+.fm-ai .check-row::before { content: "○"; color: var(--ink-mute); }
+.fm-ai .check-row.active::before { content: "✦"; color: var(--amber); }
+.fm-ai .check-row.active { border-color: var(--amber); color: var(--ink); }
+
+.fm-review {
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+  height: 100%;
+}
+.fm-review .score-big {
+  font-family: 'Fraunces', serif;
+  font-size: 56px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 0.9;
+}
+.fm-review .score-big span { color: var(--amber); }
+.fm-review .score-meta {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.fm-review .score-meta div { margin-bottom: 5px; }
+.fm-review .score-meta strong { color: var(--moss); font-weight: 500; }
+
+.fm-letter {
+  position: relative;
+  height: 100%;
+  display: grid; place-items: center;
+  padding: 16px;
+}
+.fm-letter .letter-paper {
+  width: 90%;
+  max-width: 200px;
+  background: white;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 14px 16px;
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 9px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  box-shadow: var(--shadow);
+  transform: rotate(-1.5deg);
+}
+.fm-letter .letter-paper .opener { margin-bottom: 6px; }
+.fm-letter .letter-paper .body-line {
+  height: 1.5px; background: var(--cream-2);
+  margin-bottom: 2px;
+  border-radius: 1px;
+}
+.fm-letter .letter-paper .body-line.s { width: 60%; }
+.fm-letter .letter-paper .sig {
+  font-family: 'Caveat', cursive;
+  font-style: normal;
+  font-size: 16px;
+  margin-top: 6px;
+  color: var(--ink);
+  letter-spacing: 0.04em;
+}
+
+.fm-website {
+  padding: 14px 18px;
+  height: 100%;
+}
+.fm-website .browser {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  height: 100%;
+  overflow: hidden;
+}
+.fm-website .br-bar {
+  background: var(--cream-2);
+  border-bottom: 1px solid var(--rule);
+  padding: 5px 8px;
+  display: flex; align-items: center; gap: 4px;
+}
+.fm-website .br-bar .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--rule);
+}
+.fm-website .br-bar .url {
+  flex: 1;
+  margin-left: 6px;
+  background: var(--paper);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 8px;
+  color: var(--ink-mute);
+}
+.fm-website .br-content {
+  padding: 10px 14px;
+  font-family: 'Fraunces', serif;
+}
+.fm-website .br-name { font-size: 14px; font-weight: 500; }
+.fm-website .br-bio {
+  font-style: italic;
+  font-size: 8.5px;
+  color: var(--ink-mute);
+  margin-bottom: 6px;
+}
+.fm-website .br-line {
+  height: 1.5px;
+  background: var(--cream-2);
+  margin-bottom: 2px;
+  border-radius: 1px;
+}
+.fm-website .br-line.s { width: 60%; }
+
+.fm-track {
+  padding: 14px 14px 28px;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+}
+.fm-track .bar {
+  flex: 1;
+  background: var(--ink);
+  border-radius: 2px 2px 0 0;
+  position: relative;
+}
+.fm-track .bar.amber { background: var(--amber); }
+.fm-track .bar::after {
+  content: attr(data-label);
+  position: absolute;
+  bottom: -16px; left: 50%;
+  transform: translateX(-50%);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 8px;
+  color: var(--ink-mute);
+  letter-spacing: 0.05em;
+}
+
+/* ============ FINAL CTA ============ */
+.final-cta {
+  text-align: center;
+  padding: clamp(60px, 8vw, 100px) 0 clamp(70px, 10vw, 130px);
+  border-top: 1px solid var(--rule);
+}
+.final-cta h2 {
+  font-family: 'Fraunces', serif;
+  font-weight: 400;
+  font-size: clamp(40px, 6vw, 80px);
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+  margin-bottom: 20px;
+}
+.final-cta h2 em { font-style: italic; color: var(--amber); }
+.final-cta p {
+  color: var(--ink-soft);
+  font-size: 17px;
+  max-width: 520px;
+  margin: 0 auto 36px;
+}
+.final-cta .hero-cta { margin-bottom: 0; }
+
+/* ============ FOOTER ============ */
+footer {
+  border-top: 1px solid var(--rule);
+  padding: 50px 0 32px;
+  background: var(--cream-2);
+  font-size: 14px;
+}
+.foot-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr;
+  gap: 50px;
+  margin-bottom: 40px;
+}
+.foot-col h5 {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 16px;
+  font-weight: 500;
+}
+.foot-col ul { list-style: none; display: flex; flex-direction: column; gap: 9px; }
+.foot-col a { color: var(--ink-soft); transition: color .2s; }
+.foot-col a:hover { color: var(--amber); }
+.foot-blurb {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 16px;
+  color: var(--ink-soft);
+  max-width: 280px;
+  line-height: 1.45;
+  margin-top: 14px;
+}
+.foot-bottom {
+  padding-top: 24px;
+  border-top: 1px solid var(--rule);
+  display: flex; justify-content: space-between; align-items: center;
+  color: var(--ink-mute);
+  font-size: 13px;
+  flex-wrap: wrap; gap: 14px;
+}
+@media (max-width: 800px) { .foot-grid { grid-template-columns: 1fr 1fr; gap: 36px; } }
+
+/* ============ ANIMATIONS ============ */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity .8s cubic-bezier(.2,.8,.2,1), transform .8s cubic-bezier(.2,.8,.2,1);
+}
+.reveal.in { opacity: 1; transform: translateY(0); }
+.reveal.delay-1 { transition-delay: .08s; }
+.reveal.delay-2 { transition-delay: .16s; }
+.reveal.delay-3 { transition-delay: .24s; }
+</style>
+</head>
+<body>
+
+<nav class="nav" id="nav">
+  <div class="container nav-inner">
+    <a href="index.html" class="logo">Folio<span class="dot"></span></a>
+    <div class="nav-links">
+      <a href="#templates">Templates</a>
+      <a href="#features">Features</a>
+      <a href="builder.html">Builder</a>
+      <a href="dashboard.html">My résumés</a>
+    </div>
+    <div class="nav-cta" id="nav-cta">
+      <a href="auth.html?mode=login" class="btn btn-ghost">Log in</a>
+      <a href="auth.html?mode=signup" class="btn btn-primary">Get started</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <div class="eyebrow reveal">Folio · The career &amp; document studio</div>
+    <h1 class="reveal delay-1">Job-winning <em>résumé</em><br>builder.</h1>
+    <p class="hero-lede reveal delay-2">
+      Get hired 2× as fast.<sup>1</sup> Choose from typeset, recruiter-approved templates. Add ready-to-use bullet points and phrases written by people who actually read résumés.
+    </p>
+    <div class="hero-cta reveal delay-3">
+      <a href="builder.html" class="btn btn-amber">Create new résumé</a>
+      <a href="builder.html" class="btn btn-outline">Optimise my résumé</a>
+    </div>
+
+    <div class="steps">
+      <a href="builder.html" class="step-card reveal" data-step="1">
+        <div class="step-tag"><span class="dot"></span>Step 01 · Pick</div>
+        <div class="step-title">A <em>typeset</em> template, not clip art.</div>
+        <div class="step-mock">
+          <div class="mock-template">
+            <div class="mt-name">Maya Hernandez</div>
+            <div class="mt-role">Senior Product Designer</div>
+            <div class="mt-rule"></div>
+            <div class="mt-h">Summary</div>
+            <div class="mt-line m"></div>
+            <div class="mt-line"></div>
+            <div class="mt-line s"></div>
+            <div class="mt-h">Experience</div>
+            <div class="mt-line m"></div>
+            <div class="mt-line"></div>
+            <div class="mt-line s"></div>
+            <div class="mt-line"></div>
+          </div>
+          <div class="mock-badge">Recruiter‑approved</div>
+        </div>
+      </a>
+
+      <a href="builder.html" class="step-card reveal delay-1" data-step="2">
+        <div class="step-tag"><span class="dot"></span>Step 02 · Polish</div>
+        <div class="step-title">Generate content with <em>AI support</em>.</div>
+        <div class="step-mock">
+          <div class="mock-ai">
+            <div class="ai-tag">AI suggestions</div>
+            <div class="ai-line">Cultivated strong business relationships with customers to drive new development.</div>
+            <div class="ai-suggestion">Built and nurtured a portfolio of 40+ enterprise relationships, driving $2.1M in new pipeline.</div>
+            <div class="typing"></div>
+          </div>
+        </div>
+      </a>
+
+      <a href="builder.html" class="step-card reveal delay-2" data-step="3">
+        <div class="step-tag"><span class="dot"></span>Step 03 · Apply</div>
+        <div class="step-title">Get your résumé &amp; <em>apply</em>.</div>
+        <div class="step-mock">
+          <div class="mock-final">
+            <div class="mf-name">Maya Hernandez</div>
+            <div class="mf-role">Senior Product Designer</div>
+            <div class="mf-rule"></div>
+            <div class="mf-h">Summary</div>
+            <div class="mf-line"></div>
+            <div class="mf-line s"></div>
+            <div class="mf-h">Experience</div>
+            <div class="mf-line"></div>
+            <div class="mf-line"></div>
+            <div class="mf-line s"></div>
+            <div class="mf-line"></div>
+            <div class="mf-h">Skills</div>
+            <div class="mf-line"></div>
+            <div class="mf-line s"></div>
+          </div>
+          <div class="mock-pill">↓ PDF ready</div>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section class="trust">
+  <div class="container trust-inner">
+    <div class="rating">
+      <span class="rating-label">Excellent</span>
+      <span class="stars">★ ★ ★ ★ ★</span>
+      <span><em>4.7 / 5</em> from 24,318 réviews</span>
+    </div>
+    <div class="hired-by">
+      <span class="label">Customers have been hired by</span>
+      <div class="logos">
+        <span>amazon</span>
+        <span>Pinterest</span>
+        <span>NIKE</span>
+        <span>Walmart</span>
+        <span>SEPHORA</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="templates">
+  <div class="container">
+    <div class="section-head">
+      <h2 class="reveal">Templates designed by<br>people who <em>read</em>.</h2>
+      <p class="reveal delay-1">No "creative" templates with cartoon icons. Each one is typeset like it belongs in a literary magazine, not a clip-art folder.</p>
+    </div>
+
+    <div class="templates-row">
+      <a href="builder.html?template=broadsheet" class="template reveal">
+        <div class="template-preview tpl-classic">
+          <div class="tname">Maya Hernandez</div>
+          <div class="trole">Senior Product Designer</div>
+          <div class="trule"></div>
+          <div class="th">Summary</div>
+          <div class="tline m"></div><div class="tline"></div><div class="tline s"></div>
+          <div class="th">Experience</div>
+          <div class="tline m"></div><div class="tline"></div>
+          <div class="tline s"></div><div class="tline"></div>
+          <div class="th">Education</div>
+          <div class="tline m"></div>
+        </div>
+        <div class="template-meta">
+          <div class="template-name-row">
+            <span class="name">Broadsheet</span>
+            <span class="tag">CLASSIC</span>
+          </div>
+        </div>
+      </a>
+
+      <a href="builder.html?template=sidebar" class="template reveal delay-1">
+        <div class="template-preview tpl-modern" style="position:relative;">
+          <div class="left"></div>
+          <div style="margin-left: 32%;">
+            <div class="tname">Maya Hernandez</div>
+            <div class="trole">Senior Product Designer</div>
+            <div class="tline m"></div><div class="tline"></div><div class="tline s"></div>
+            <div class="tline m"></div><div class="tline"></div>
+          </div>
+        </div>
+        <div class="template-meta">
+          <div class="template-name-row">
+            <span class="name">Sidebar</span>
+            <span class="tag">MODERN</span>
+          </div>
+        </div>
+      </a>
+
+      <a href="builder.html?template=editorial" class="template reveal delay-2">
+        <div class="template-preview tpl-editorial">
+          <div class="tname">Maya<br>Hernandez</div>
+          <div class="trole">Senior Product Designer</div>
+          <div class="tcol">
+            <div>
+              <div class="th">Contact</div>
+              <div class="tline"></div><div class="tline"></div>
+              <div class="th">Skills</div>
+              <div class="tline"></div><div class="tline"></div><div class="tline"></div>
+            </div>
+            <div>
+              <div class="th">Experience</div>
+              <div class="tline"></div><div class="tline"></div><div class="tline"></div><div class="tline"></div>
+            </div>
+          </div>
+        </div>
+        <div class="template-meta">
+          <div class="template-name-row">
+            <span class="name">Editorial</span>
+            <span class="tag">SERIF</span>
+          </div>
+        </div>
+      </a>
+
+      <a href="builder.html?template=whisper" class="template reveal delay-3">
+        <div class="template-preview tpl-minimal">
+          <div class="tname">maya hernandez.</div>
+          <div class="trole">senior product designer</div>
+          <div class="th">work</div>
+          <div class="tline"></div><div class="tline"></div><div class="tline"></div>
+          <div class="th">education</div>
+          <div class="tline"></div><div class="tline"></div>
+          <div class="th">tools</div>
+          <div class="tline"></div>
+        </div>
+        <div class="template-meta">
+          <div class="template-name-row">
+            <span class="name">Whisper</span>
+            <span class="tag">MINIMAL</span>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <div class="view-all reveal">
+      <a href="builder.html">View all templates →</a>
+    </div>
+  </div>
+</section>
+
+<section class="results">
+  <div class="container">
+    <div class="results-head">
+      <h2 class="reveal">Create a résumé<br>that gets <span class="underline-word">results</span>.</h2>
+      <div class="arrow-cta reveal delay-1">
+        <svg class="arrow-svg" viewBox="0 0 110 60">
+          <path d="M5 30 Q 35 8, 70 22 T 100 38" />
+          <path d="M93 33 L100 38 L96 45" stroke-linejoin="round"/>
+        </svg>
+        <a href="builder.html" class="btn btn-amber">Choose a template</a>
+      </div>
+    </div>
+
+    <div class="benefits">
+      <div class="benefit reveal">
+        <span class="benefit-num">i.</span>
+        <h3>No experience necessary.</h3>
+        <p>Whether you're entering the workforce or you've been at it twenty years, Folio's Composer gives you a starting structure that flatters either situation. No staring at a blank page.</p>
+      </div>
+      <div class="benefit reveal delay-1">
+        <span class="benefit-num">ii.</span>
+        <h3>Tell us a bit about yourself.</h3>
+        <p>We'll suggest the bullet points, phrasing, and section ordering that hiring managers actually respond to — guiding you toward callbacks, not stylistic dead ends.</p>
+      </div>
+      <div class="benefit reveal delay-2">
+        <span class="benefit-num">iii.</span>
+        <h3>Simpler than you expect.</h3>
+        <p>We've helped over a million applicants get interviews. From first draft to final export, an impactful résumé starts with the right tools — and ends in your inbox.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="container">
+    <div class="section-head">
+      <h2 class="reveal">Six features to <em>boost</em><br>your job search.</h2>
+      <p class="reveal delay-1">Each one designed to do one thing exceptionally — and quietly hand you off to the next.</p>
+    </div>
+
+    <div class="features-grid">
+      <a href="builder.html" class="feature-card reveal">
+        <div class="feature-num">№ 01</div>
+        <h3>Template <em>Library</em></h3>
+        <p>Five typeset templates. Each tested across four ATS engines before it ships.</p>
+        <div class="feature-mock fm-templates">
+          <div class="mini">
+            <div class="mini-name">Avery</div>
+            <div class="mini-line s"></div><div class="mini-line"></div><div class="mini-line s"></div><div class="mini-line"></div>
+          </div>
+          <div class="mini">
+            <div class="mini-name">Maya</div>
+            <div class="mini-line s"></div><div class="mini-line"></div><div class="mini-line"></div><div class="mini-line s"></div>
+          </div>
+          <div class="mini">
+            <div class="mini-name">Jordan</div>
+            <div class="mini-line s"></div><div class="mini-line"></div><div class="mini-line s"></div><div class="mini-line"></div>
+          </div>
+        </div>
+      </a>
+
+      <div class="feature-card reveal delay-1">
+        <div class="feature-num">№ 02</div>
+        <h3>Live <em>Preview</em></h3>
+        <p>Edit and see the result instantly. Five templates, all driven by the same data — switch any time.</p>
+        <div class="feature-mock fm-ai">
+          <div class="check-row done">Sample data prefilled</div>
+          <div class="check-row active">Live updates as you type</div>
+          <div class="check-row">Switch templates anytime</div>
+          <div class="check-row">Auto-save on every keystroke</div>
+        </div>
+      </div>
+
+      <div class="feature-card reveal delay-2">
+        <div class="feature-num">№ 03</div>
+        <h3>ATS-clean <em>format</em></h3>
+        <p>Plain text underneath, beautiful on top. Parses cleanly in Workday, Greenhouse, Lever.</p>
+        <div class="feature-mock fm-review">
+          <div class="score-big">87<span>%</span></div>
+          <div class="score-meta">
+            <div>Format <strong>Clean</strong></div>
+            <div>Length <strong>1 page</strong></div>
+            <div>Keywords <strong>12/14</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <a href="builder.html" class="feature-card reveal">
+        <div class="feature-num">№ 04</div>
+        <h3>One-click <em>PDF</em></h3>
+        <p>Real PDF export, ready to email. Sign up to download — we'll save your work.</p>
+        <div class="feature-mock fm-letter">
+          <div class="letter-paper">
+            <div class="opener">Dear hiring manager,</div>
+            <div class="body-line"></div>
+            <div class="body-line s"></div>
+            <div class="body-line"></div>
+            <div class="body-line"></div>
+            <div class="body-line s"></div>
+            <div class="sig">— Maya</div>
+          </div>
+        </div>
+      </a>
+
+      <a href="dashboard.html" class="feature-card reveal delay-1">
+        <div class="feature-num">№ 05</div>
+        <h3>Saved to your <em>account</em></h3>
+        <p>Sign up once. Edit, save, come back next week. Every résumé reachable from your dashboard.</p>
+        <div class="feature-mock fm-website">
+          <div class="browser">
+            <div class="br-bar">
+              <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+              <div class="url">folio.cv/dashboard</div>
+            </div>
+            <div class="br-content">
+              <div class="br-name">Maya Hernandez</div>
+              <div class="br-bio">3 résumés · last edited 2 days ago</div>
+              <div class="br-line"></div>
+              <div class="br-line s"></div>
+              <div class="br-line"></div>
+            </div>
+          </div>
+        </div>
+      </a>
+
+      <a href="builder.html" class="feature-card reveal delay-2">
+        <div class="feature-num">№ 06</div>
+        <h3>Edit <em>anytime</em></h3>
+        <p>Continue any draft. Duplicate to make a tailored version. Delete what you don't need.</p>
+        <div class="feature-mock fm-track">
+          <div class="bar" style="height:30%;" data-label="S"></div>
+          <div class="bar" style="height:55%;" data-label="A"></div>
+          <div class="bar amber" style="height:75%;" data-label="I"></div>
+          <div class="bar" style="height:25%;" data-label="O"></div>
+          <div class="bar" style="height:45%;" data-label="R"></div>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="container">
+    <h2 class="reveal">Stop tweaking.<br><em>Start applying.</em></h2>
+    <p class="reveal delay-1">Free forever for the basics. Sign up, save your work, edit anywhere.</p>
+    <div class="hero-cta reveal delay-2">
+      <a href="builder.html" class="btn btn-amber">Create new résumé</a>
+      <a href="auth.html?mode=signup" class="btn btn-outline">Create account</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="foot-grid">
+      <div class="foot-col">
+        <a href="index.html" class="logo">Folio<span class="dot"></span></a>
+        <p class="foot-blurb">"The career and document studio for people who give a damn about how their work looks."</p>
+      </div>
+      <div class="foot-col">
+        <h5>Product</h5>
+        <ul>
+          <li><a href="builder.html">Resume Builder</a></li>
+          <li><a href="builder.html">Templates</a></li>
+          <li><a href="dashboard.html">My résumés</a></li>
+          <li><a href="auth.html?mode=signup">Sign up</a></li>
+          <li><a href="auth.html?mode=login">Log in</a></li>
+        </ul>
+      </div>
+      <div class="foot-col">
+        <h5>Resources</h5>
+        <ul>
+          <li><a href="builder.html?template=broadsheet">Broadsheet template</a></li>
+          <li><a href="builder.html?template=sidebar">Sidebar template</a></li>
+          <li><a href="builder.html?template=editorial">Editorial template</a></li>
+          <li><a href="builder.html?template=whisper">Whisper template</a></li>
+          <li><a href="builder.html?template=compact">Compact template</a></li>
+        </ul>
+      </div>
+      <div class="foot-col">
+        <h5>Company</h5>
+        <ul>
+          <li><a href="#">About</a></li>
+          <li><a href="#">Privacy</a></li>
+          <li><a href="#">Terms</a></li>
+          <li><a href="#">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 Folio Studio Inc. Designed in Brooklyn. Typeset everywhere.</span>
+      <span class="mono">v1.0</span>
+    </div>
+  </div>
+</footer>
+
+<script src="folio.js"></script>
+<script>
+  // Nav scroll state
+  const nav = document.getElementById('nav');
+  window.addEventListener('scroll', () => {
+    nav.classList.toggle('scrolled', window.scrollY > 8);
+  }, { passive: true });
+
+  // Reveal-on-scroll animations
+  const reveals = document.querySelectorAll('.reveal');
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+  reveals.forEach(el => io.observe(el));
+
+  window.addEventListener('load', () => {
+    document.querySelectorAll('.hero .reveal').forEach(el => el.classList.add('in'));
+  });
+
+  // If user is logged in, swap nav CTAs to show "My résumés" / "Log out"
+  // (folio.js's renderNav() handles this on every page that has .nav-cta)
+</script>
+
+</body>
+</html>
