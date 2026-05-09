@@ -1,0 +1,58 @@
+# Folio — one-command local stack
+# Usage:
+#   1. cp .env.example .env  (then fill in AUTH_SECRET and ANTHROPIC_API_KEY)
+#   2. docker compose up
+#   3. open http://localhost:3000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: folio
+      POSTGRES_PASSWORD: folio
+      POSTGRES_DB: folio
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Exposed so you can use Prisma Studio or psql from your host if you want.
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U folio -d folio"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The app talks to postgres via the service name `postgres` on the
+      # internal Docker network — this connection string is correct as-is.
+      DATABASE_URL: "postgresql://folio:folio@postgres:5432/folio"
+      # These two come from your .env file (see .env.example):
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in .env — run `openssl rand -base64 32` to generate one}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY in .env — get one at https://console.anthropic.com}
+      NEXT_PUBLIC_BASE_URL: http://localhost:3000
+      # File-watching reliability inside Docker on macOS/Windows:
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      # Bind-mount the source so changes hot-reload.
+      - .:/app
+      # Anonymous volumes that "win" over the bind mount, keeping the
+      # container's node_modules and .next intact (otherwise the empty
+      # host directory would shadow them).
+      - /app/node_modules
+      - /app/.next
+    # Sync the schema, then start dev server.
+    command: >
+      sh -c "npx prisma db push --skip-generate && npx next dev -H 0.0.0.0"
+
+volumes:
+  postgres_data:
